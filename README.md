@@ -1,6 +1,6 @@
 # YALS - Yet Another Looking Glass
 
-YALS是一个通过SSH连接控制多台agent的Looking Glass服务程序。它允许用户通过Web界面在不同的agent上执行网络诊断命令，如ping、mtr和nexttrace。
+YALS是一个中心化设计的通过SSH连接控制多台agent的Looking Glass服务程序。它允许用户通过Web界面在不同的agent上执行网络诊断命令，如ping、mtr和nexttrace。
 
 ### 🚀 Sponsored by SharonNetworks
 
