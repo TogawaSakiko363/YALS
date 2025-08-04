@@ -1,0 +1,100 @@
+# YALS Server Configuration
+
+# Application settings
+app:
+  version: "1.0.0-basic"
+
+# Server settings
+server:
+  host: "0.0.0.0"
+  port: 8080
+  log_level: "info"  # debug, info, warn, error
+
+# WebSocket settings
+websocket:
+  ping_interval: 30  # seconds
+  pong_wait: 60      # seconds
+
+# Command templates - flexible command definitions
+commands:
+  ping:
+    template: "ping -c 4"
+    description: "网络连通性测试"
+  mtr:
+    template: "mtr -r -c 4"
+    description: "网络路由和丢包分析"
+  nexttrace:
+    template: "nexttrace --nocolor --map --ipv4"
+    description: "可视化路由跟踪"
+  # 示例：添加新命令
+  # traceroute:
+  #   template: "traceroute -n"
+  #   description: "路由跟踪"
+  # dig:
+  #   template: "dig +short"
+  #   description: "DNS查询"
+
+# Agent settings
+agents:
+  - name: "Agent 01"
+    host: "11.4.51.4"
+    port: 22
+    username: "yals"
+    password: "thisisastrongpassword"  # Leave empty if using key authentication
+    key_file: ""  # Path to private key file
+    commands:
+      - ping
+      - mtr
+      - nexttrace
+    details:
+      location: "幻想乡"
+      datacenter: "沼泽动力1号机房"
+      test_ip: "11.4.51.4"
+      description: "地月114514Tbps IPLC独享专线"
+
+  - name: "Agent 02"
+    host: "114.5.1.4"
+    port: 22
+    username: "yals"
+    password: "thisisastrongpassword"  # Leave empty if using key authentication
+    key_file: ""  # Path to private key file
+    commands:
+      - ping
+      - mtr
+      - nexttrace
+    details:
+      location: "幻想乡"
+      datacenter: "沼泽动力1号机房"
+      test_ip: "114.5.1.4"
+      description: "地月114514Tbps IPLC独享专线"
+
+  - name: "Agent 03"
+    host: "192.168.6.209"
+    port: 22
+    username: "root"
+    password: "FUCK~z8350!"  # Leave empty if using key authentication
+    key_file: ""  # Path to private key file
+    commands:
+      - ping
+      - mtr
+      - nexttrace
+    details:
+      location: "幻想乡"
+      datacenter: "沼泽动力1号机房"
+      test_ip: "114.5.1.4"
+      description: "地月114514Tbps IPLC独享专线"
+
+group:
+  - name: "local"
+    agents:
+      - "Agent 01"
+  - name: "remote"
+    agents:
+      - "Agent 02"
+
+# Connection settings
+connection:
+  timeout: 10        # seconds
+  keepalive: 60      # seconds
+  retry_interval: 10 # seconds
+  max_retries: 999
