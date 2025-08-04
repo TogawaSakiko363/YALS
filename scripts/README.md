@@ -19,11 +19,11 @@
 1. 将脚本上传到目标Linux服务器
 2. 赋予脚本执行权限：
    ```
-   chmod +x setup_yals_user.sh
+   chmod +x setup_agent.sh
    ```
 3. 以root权限运行脚本：
    ```
-   sudo ./setup_yals_user.sh
+   sudo ./setup_agent.sh
    ```
 4. 脚本执行完成后，会显示创建的用户名和随机生成的密码
 
