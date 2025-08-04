@@ -27,6 +27,9 @@ SharonNetworks 为您的业务起飞保驾护航！
 - 输入验证和安全防护
 - 可配置的服务器和agent设置
 
+## 实战案例
+  [Sharon Networks](https://lg.sharon.io)
+
 ## 系统要求
 
 ### 服务器端
