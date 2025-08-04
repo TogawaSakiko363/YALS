@@ -81,7 +81,6 @@ sudo ./setup_agent.sh
 - `websocket`: WebSocket连接设置
 - `agents`: Agent列表及其连接信息
 - `connection`: 连接超时和重试设置
-- `data`: 数据存储设置
 
 
 ## 前端构建说明
