@@ -22,7 +22,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       return {};
     }
   });
-
+  // 本地存储工具函数
   const getLocalStorage = (key: string): string | null => {
     try {
       return localStorage.getItem(key);
@@ -48,6 +48,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     }
   });
   const [activeCommands, setActiveCommands] = useState<Set<string>>(new Set());
+  const [streamingOutputs, setStreamingOutputs] = useState<Map<string, string>>(new Map());
 
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -83,15 +84,18 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
           const groupsData = message.groups || {};
           setGroups(groupsData);
           
+          // 将分组数据转换为agents列表用于向后兼容
           const allAgents: Agent[] = [];
           
           if (Array.isArray(groupsData)) {
+            // 新格式：有序数组
             groupsData.forEach(group => {
               if (Array.isArray(group.agents)) {
                 allAgents.push(...group.agents);
               }
             });
           } else {
+            // 旧格式：对象
             Object.values(groupsData).forEach((value: unknown) => {
               if (Array.isArray(value)) {
                 const groupAgents = value as Agent[];
@@ -102,6 +106,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
           
           setAgents(allAgents);
           
+          // 如果没有选择代理且有可用代理，选择第一个在线的代理
           if (!selectedAgent && allAgents.length > 0) {
             const onlineAgent = allAgents.find((agent: Agent) => agent.status === 1);
             if (onlineAgent) {
@@ -117,13 +122,41 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
         const commandsArray = message.commands || [];
         const commandsMap: Record<string, string> = {};
         
+        // 将数组转换为对象，保持服务器返回的顺序
         commandsArray.forEach((cmd: { name: string; description: string }) => {
           commandsMap[cmd.name] = cmd.description;
         });
         
         setCommands(commandsMap);
         setLocalStorage('yals_commands', JSON.stringify(commandsMap));
-       } else if (message.command) {
+      } else if (message.type === 'command_output') {
+        // Handle streaming command output
+        const commandId = `${message.command}-${message.target}-${message.agent}`;
+        
+        if (message.is_complete) {
+          // Command completed
+          setActiveCommands(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(commandId);
+            return newSet;
+          });
+          
+          // Don't update command history here, let executeCommand handle it
+          // The history will be updated when executeCommand resolves with the final output
+        } else {
+          // Streaming output chunk
+          setStreamingOutputs(prev => {
+            const newMap = new Map(prev);
+            const currentOutput = newMap.get(commandId) || '';
+            const newOutput = message.error ? 
+              currentOutput + (currentOutput ? '\n' : '') + message.error :
+              currentOutput + (currentOutput ? '\n' : '') + message.output;
+            newMap.set(commandId, newOutput);
+            return newMap;
+          });
+        }
+      } else if (message.command) {
+        // 处理命令响应
         const commandId = `${message.command}-${message.target}-${message.agent}`;
         
         setActiveCommands(prev => {
@@ -151,6 +184,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
             updated[existingIndex] = { ...updated[existingIndex], response };
             updatedHistory = updated;
           } else {
+            // 如果是新命令，添加到历史记录
             const newHistoryItem: CommandHistory = {
               id: commandId,
               command: message.command,
@@ -162,8 +196,10 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
             updatedHistory = [newHistoryItem, ...prev];
           }
           
+          // 限制历史记录数量，避免过大
           const limitedHistory = updatedHistory.slice(0, 100);
           
+          // 立即保存到本地存储
           setLocalStorage('yals_command_history', JSON.stringify(limitedHistory));
           
           return limitedHistory;
@@ -200,6 +236,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
             reconnectTimeoutRef.current = null;
           }
           
+          // 获取应用配置和命令列表
           const configRequest = JSON.stringify({ type: 'get_config' });
           socket.send(configRequest);
           
@@ -248,7 +285,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     
     setIsConnected(false);
     setIsConnecting(false);
-    reconnectAttemptsRef.current = maxReconnectAttempts;
+    reconnectAttemptsRef.current = maxReconnectAttempts; // 防止自动重连
   }, [maxReconnectAttempts]);
 
   const executeCommand = useCallback(async (command: CommandType, target: string): Promise<CommandResponse> => {
@@ -267,8 +304,17 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     const trimmedTarget = target.trim();
     const commandId = `${command}-${trimmedTarget}-${selectedAgent}`;
     
+    // 添加到活动命令集合
     setActiveCommands(prev => new Set(prev).add(commandId));
     
+    // 清理之前的流式输出
+    setStreamingOutputs(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(commandId);
+      return newMap;
+    });
+    
+    // 添加到历史记录
     const historyEntry: CommandHistory = {
       id: commandId,
       command,
@@ -287,22 +333,100 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     };
 
     return new Promise((resolve, reject) => {
+      let accumulatedOutput = ''; // 在Promise内部累积输出
+      
       const timeoutId = setTimeout(() => {
         setActiveCommands(prev => {
           const newSet = new Set(prev);
           newSet.delete(commandId);
           return newSet;
         });
+        setStreamingOutputs(prev => {
+          const newMap = new Map(prev);
+          newMap.delete(commandId);
+          return newMap;
+        });
         reject(new Error('命令执行超时'));
-      }, 60000); // 60秒超时
+      }, 120000); // 120秒超时，给流式输出更多时间
 
       const messageHandler = (event: MessageEvent) => {
         try {
           const response = JSON.parse(event.data);
           
-          if (response.command === command && 
+          // Handle streaming output chunks
+          if (response.type === 'command_output' && 
+              response.command === command && 
               response.agent === selectedAgent && 
-              response.target === trimmedTarget) {
+              response.target === trimmedTarget &&
+              !response.is_complete) {
+            
+            // 累积输出
+            if (response.output) {
+              accumulatedOutput += (accumulatedOutput ? '\n' : '') + response.output;
+            }
+            if (response.error) {
+              accumulatedOutput += (accumulatedOutput ? '\n' : '') + response.error;
+            }
+          }
+          
+          // Handle streaming output completion
+          else if (response.type === 'command_output' && 
+              response.command === command && 
+              response.agent === selectedAgent && 
+              response.target === trimmedTarget &&
+              response.is_complete) {
+            
+            socketRef.current?.removeEventListener('message', messageHandler);
+            clearTimeout(timeoutId);
+            
+            const commandResponse: CommandResponse = {
+              success: response.success,
+              command: response.command,
+              target: response.target,
+              agent: response.agent,
+              output: accumulatedOutput, // 使用累积的输出
+              error: response.error,
+              timestamp: Date.now()
+            };
+            
+            // Update command history with final result
+            setCommandHistory(prev => {
+              const existingIndex = prev.findIndex(h => h.id === commandId);
+              if (existingIndex >= 0) {
+                const updated = [...prev];
+                // 检查是否是停止状态
+                const finalResponse = {
+                  ...commandResponse,
+                  // 如果错误信息是"已取消"，标记为取消状态
+                  output: commandResponse.error === '已取消' ? 
+                    (accumulatedOutput + '\n*** Stopped ***') : 
+                    commandResponse.output
+                };
+                
+                updated[existingIndex] = { 
+                  ...updated[existingIndex], 
+                  response: finalResponse
+                };
+                
+                // Save to localStorage
+                setLocalStorage('yals_command_history', JSON.stringify(updated.slice(0, 100)));
+                return updated;
+              }
+              return prev;
+            });
+            
+            if (response.success) {
+              resolve(commandResponse);
+            } else {
+              reject(new Error(response.error || '命令执行失败'));
+            }
+          }
+          
+          // Handle legacy non-streaming response (fallback)
+          else if (response.command === command && 
+              response.agent === selectedAgent && 
+              response.target === trimmedTarget &&
+              !response.type) {
             
             socketRef.current?.removeEventListener('message', messageHandler);
             clearTimeout(timeoutId);
@@ -338,6 +462,31 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     setLocalStorage('yals_command_history', '[]');
   }, []);
 
+  const clearStreamingOutput = useCallback((commandId: string) => {
+    setStreamingOutputs(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(commandId);
+      return newMap;
+    });
+  }, []);
+
+  const stopCommand = useCallback((commandId: string) => {
+    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    // 发送停止命令到后端
+    const stopRequest = {
+      type: 'stop_command',
+      command_id: commandId
+    };
+
+    socketRef.current.send(JSON.stringify(stopRequest));
+    
+    // 注意：不要立即清理状态，等待后端返回停止确认
+  }, []);
+
+  // 当历史更新时写入 Cookie（4KB 限制，历史过大可能被截断）
   useEffect(() => {
     try {
       document.cookie = `yals_command_history=${encodeURIComponent(JSON.stringify(commandHistory))}`;
@@ -361,9 +510,12 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     commands,
     commandHistory,
     activeCommands,
+    streamingOutputs,
     connect,
     disconnect,
     executeCommand,
-    clearHistory
+    clearHistory,
+    clearStreamingOutput,
+    stopCommand
   };
 };

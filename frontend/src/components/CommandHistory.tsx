@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { History, Clock, Server, Target, CheckCircle, XCircle, Trash2, ChevronDown, ChevronRight, Copy } from 'lucide-react';
 import { CommandHistory as CommandHistoryType } from '../types/yals';
+import { Terminal as XTermComponent } from './Terminal';
 
 interface CommandHistoryProps {
   history: CommandHistoryType[];
@@ -29,6 +30,7 @@ export const CommandHistory: React.FC<CommandHistoryProps> = ({
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text).then(() => {
+      // 可以添加一个toast通知
     });
   };
 
@@ -56,20 +58,20 @@ export const CommandHistory: React.FC<CommandHistoryProps> = ({
         
         {history.length > 0 && (
           <button
-                            onClick={onClearHistory}
-                            className="flex items-center gap-1 px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded-md transition-colors"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                            Clear
-                          </button>
+            onClick={onClearHistory}
+            className="flex items-center gap-1 px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded-md transition-colors"
+          >
+            <Trash2 className="w-3 h-3" />
+            清空
+          </button>
         )}
       </div>
 
       {history.length === 0 ? (
         <div className="text-center py-8 text-gray-500 flex-1 flex flex-col items-center justify-center">
           <History className="w-8 h-8 mb-2 text-gray-300" />
-          <p className="text-sm">No history</p>
-          <p className="text-xs mt-0.5">Results will appear after execution</p>
+          <p className="text-sm">暂无历史</p>
+          <p className="text-xs mt-0.5">执行诊断后显示结果</p>
         </div>
       ) : (
         <div className="space-y-2 flex-1">
@@ -133,13 +135,14 @@ export const CommandHistory: React.FC<CommandHistoryProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1.5">
-                      {isActive ? (
-                        <span className="text-xs text-blue-600">Running</span>
-                      ) : hasResponse && !isActive && (
+                      {isActive && (
+                        <span className="text-xs text-blue-600">执行中</span>
+                      )}
+                      {hasResponse && !isActive && (
                         <span className={`text-xs ${
                           isSuccess ? 'text-green-600' : 'text-red-600'
                         }`}>
-                          {isSuccess ? 'Success' : 'Failed'}
+                          {isSuccess ? '成功' : '失败'}
                         </span>
                       )}
                     </div>
@@ -149,29 +152,29 @@ export const CommandHistory: React.FC<CommandHistoryProps> = ({
                 {isExpanded && hasResponse && (
                   <div className="border-t border-gray-200 p-3 bg-gray-50">
                     {item.response?.success ? (
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <h4 className="text-xs font-medium text-gray-900">Result</h4>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              copyToClipboard(item.response?.output || '');
-                            }}
-                            className="flex items-center gap-0.5 px-1.5 py-0.5 text-xs text-gray-600 hover:bg-gray-200 rounded transition-colors"
-                          >
-                            <Copy className="w-2.5 h-2.5" />
-                            Copy
-                          </button>
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <h4 className="text-xs font-medium text-gray-900">结果</h4>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                copyToClipboard(item.response?.output || '');
+                              }}
+                              className="flex items-center gap-0.5 px-1.5 py-0.5 text-xs text-gray-600 hover:bg-gray-200 rounded transition-colors"
+                            >
+                              <Copy className="w-2.5 h-2.5" />
+                              复制
+                            </button>
+                          </div>
+                          <div className="min-h-[100px]">
+                            <XTermComponent output={item.response.output} />
+                          </div>
                         </div>
-                        <pre className="text-xs bg-white p-2 rounded border font-mono overflow-x-auto whitespace-pre-wrap">
-                          {item.response.output}
-                        </pre>
-                      </div>
                     ) : (
                       <div>
-                        <h4 className="text-xs font-medium text-red-900 mb-1">Failed</h4>
+                        <h4 className="text-xs font-medium text-red-900 mb-1">失败</h4>
                         <div className="text-xs text-red-700 bg-red-50 p-2 rounded border border-red-200">
-                          {item.response?.error || 'Unknown error'}
+                          {item.response?.error || '未知错误'}
                         </div>
                       </div>
                     )}

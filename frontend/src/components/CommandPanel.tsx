@@ -1,13 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Play, Terminal, Loader2 } from 'lucide-react';
+import { Play, Terminal, Square, Loader2 } from 'lucide-react';
 import { CommandType } from '../types/yals';
+import { Terminal as XTermComponent } from './Terminal';
 
 interface CommandPanelProps {
   selectedAgent: string | null;
   isConnected: boolean;
   activeCommands: Set<string>;
   onExecuteCommand: (command: CommandType, target: string) => Promise<void>;
+  onStopCommand?: () => void;
   latestOutput?: string | null;
+  streamingOutputs?: Map<string, string>;
+  currentCommandId?: string | null;
   commands: Record<string, string>;
 }
 
@@ -22,13 +26,17 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({
   isConnected,
   activeCommands,
   onExecuteCommand,
+  onStopCommand,
   latestOutput,
+  streamingOutputs,
+  currentCommandId,
   commands
 }) => {
   const [selectedCommand, setSelectedCommand] = useState<CommandType>('ping');
   const [target, setTarget] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
-  
+
+  // 将commands map转换为CommandOption数组
   const commandOptions: CommandOption[] = Object.entries(commands || {}).map(([key, description]) => ({
     value: key as CommandType,
     label: key.toUpperCase(),
@@ -40,7 +48,7 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({
       setSelectedCommand(commandOptions[0].value);
     }
   }, [commandOptions, selectedCommand]);
-  
+
   const hasCommands = commandOptions.length > 0;
 
   const handleExecute = async () => {
@@ -75,104 +83,123 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({
       </div>
 
       <div className="space-y-4 flex-1 flex flex-col">
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            选择诊断命令
-          </label>
-          
-          {!hasCommands && (
-            <div className="text-center py-8 text-gray-500">
-              <Terminal className="w-12 h-12 mx-auto mb-2 text-gray-300" />
-              <p>暂无可用命令</p>
-            </div>
-          )}
-          
-          {hasCommands && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-              {commandOptions.map((cmd) => (
-                <div
-                  key={cmd.value}
-                  onClick={() => setSelectedCommand(cmd.value)}
-                  className={`p-3 rounded-md border cursor-pointer transition-all duration-200 ${
-                    selectedCommand === cmd.value
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <h3 className="font-medium text-sm text-gray-900">{cmd.label}</h3>
-                    {selectedCommand === cmd.value && (
-                      <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                    )}
-                  </div>
-                  <p className="text-xs text-gray-600">{cmd.description}</p>
-                </div>
-              ))}
-            </div>
-          )}
-          
-
-        </div>
-
-
-        <div>
-          <label htmlFor="target" className="block text-sm font-medium text-gray-700 mb-1">
-            目标地址
-          </label>
-          <input
-            id="target"
-            type="text"
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="例如：8.8.8.8 或 google.com"
-            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-            disabled={!isConnected || !selectedAgent}
-          />
-        </div>
-
-
-        <div className="flex items-center justify-between">
-          <div className="text-xs text-gray-600">
-            {!isConnected ? (
-              <span className="text-red-600">请先连接服务器</span>
-            ) : !selectedAgent ? (
-              <span className="text-yellow-600">请选择代理节点</span>
-            ) : (
-              <span>节点: <strong>{selectedAgent}</strong></span>
-            )}
+        {!hasCommands && (
+          <div className="text-center py-8 text-gray-500">
+            <Terminal className="w-12 h-12 mx-auto mb-2 text-gray-300" />
+            <p>暂无可用命令</p>
           </div>
-          
-          <button
-            onClick={handleExecute}
-            disabled={!canExecute || isCommandActive}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${
-              canExecute && !isCommandActive
-                ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm hover:shadow-md'
-                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-            }`}
-          >
-            {isExecuting || isCommandActive ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Play className="w-3.5 h-3.5" />
-            )}
-            {isExecuting || isCommandActive ? '执行中...' : '执行'}
-          </button>
+        )}
+
+        {hasCommands && (
+          <div className="flex items-end gap-2">
+            {/* 命令选择下拉菜单 */}
+            <div className="shrink-0">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                命令类型
+              </label>
+              <select
+                value={selectedCommand}
+                onChange={(e) => setSelectedCommand(e.target.value as CommandType)}
+                className="w-auto min-w-[80px] px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white"
+                disabled={!isConnected || !selectedAgent || isCommandActive}
+              >
+                {commandOptions.map((cmd) => (
+                  <option key={cmd.value} value={cmd.value}>
+                    {cmd.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 目标输入 - 占据剩余空间 */}
+            <div className="flex-grow min-w-[150px]">
+              <label htmlFor="target" className="block text-sm font-medium text-gray-700 mb-1">
+                目标地址
+              </label>
+              <input
+                id="target"
+                type="text"
+                value={target}
+                onChange={(e) => setTarget(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder="Enter the target"
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                disabled={!isConnected || !selectedAgent || isCommandActive}
+              />
+            </div>
+
+            {/* 执行和停止按钮 */}
+            <div className="ml-1 flex gap-2">
+              {/* Run按钮 */}
+              <button
+                onClick={handleExecute}
+                disabled={!canExecute || isCommandActive}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${canExecute && !isCommandActive
+                  ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm hover:shadow-md'
+                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  }`}
+                style={{ height: '36px' }}
+              >
+                {isExecuting || isCommandActive ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Play className="w-3.5 h-3.5" />
+                )}
+                Run
+              </button>
+
+              {/* Stop按钮 */}
+              <button
+                onClick={onStopCommand}
+                disabled={!isCommandActive}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${isCommandActive
+                  ? 'bg-red-600 text-white hover:bg-red-700 shadow-sm hover:shadow-md'
+                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  }`}
+                style={{ height: '36px' }}
+              >
+                <Square className="w-3.5 h-3.5" />
+                Stop
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 状态提示 */}
+        <div className="text-xs text-gray-600 mt-1">
+          {!isConnected ? (
+            <span className="text-red-600">请先连接服务器</span>
+          ) : !selectedAgent ? (
+            <span className="text-yellow-600">请选择代理节点</span>
+          ) : (
+            <span>节点: <strong>{selectedAgent}</strong>   命令功能: {commandOptions.find(cmd => cmd.value === selectedCommand)?.description || '未知'}</span>
+          )}
         </div>
 
-
+        {/* 美化的终端输出区域 */}
         <div className="mt-6">
-          <pre className="bg-slate-800 text-white p-4 rounded-lg text-xs whitespace-pre-wrap overflow-x-auto min-h-[120px] text-left">
-            {latestOutput !== null ? (
-              latestOutput || 'Command completed with no output'
-            ) : (
-              <span className="text-slate-400 italic">
-                Select a command type and target address above, then click "Execute" to start testing
-              </span>
-            )}
-          </pre>
+          <div className="bg-gray-800 rounded-lg shadow-lg overflow-hidden">
+            {/* Terminal Header with macOS style dots */}
+            <div className="bg-gray-700 px-4 py-3 flex items-center">
+              <div className="flex space-x-2">
+                <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+              </div>
+              <div className="flex-1 text-center">
+                <span className="text-gray-300 text-sm font-medium">Terminal</span>
+              </div>
+            </div>
+
+            {/* Terminal Content */}
+            <div className="p-4 min-h-[300px]">
+              <XTermComponent
+                output={latestOutput}
+                streamingOutput={currentCommandId ? streamingOutputs?.get(currentCommandId) : undefined}
+                isStreaming={currentCommandId ? activeCommands.has(currentCommandId) : false}
+              />
+            </div>
+          </div>
         </div>
       </div>
     </div>

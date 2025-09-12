@@ -7,10 +7,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// AppConfig represents application-level configuration
 type AppConfig struct {
 	Version string `yaml:"version"`
 }
 
+// Config represents the server configuration
 type Config struct {
 	App AppConfig `yaml:"app"`
 	
@@ -38,11 +40,13 @@ type Config struct {
 	Groups   []Group   `yaml:"group"`
 }
 
+// CommandConfig represents a command configuration
 type CommandConfig struct {
 	Template    string `yaml:"template"`
 	Description string `yaml:"description"`
 }
 
+// AgentDetails represents additional agent information
 type AgentDetails struct {
 	Location   string `yaml:"location"`
 	Datacenter string `yaml:"datacenter"`
@@ -50,6 +54,7 @@ type AgentDetails struct {
 	Description string `yaml:"description"`
 }
 
+// Agent represents an SSH agent configuration
 type Agent struct {
 	Name     string      `yaml:"name"`
 	Host     string      `yaml:"host"`
@@ -61,16 +66,19 @@ type Agent struct {
 	Details  AgentDetails `yaml:"details"`
 }
 
+// Group represents a group configuration for agents
 type Group struct {
 	Name   string   `yaml:"name"`
 	Agents []string `yaml:"agents"`
 }
 
+// AgentGroup represents an agent with its group information
 type AgentGroup struct {
 	Agent Agent  `json:"agent"`
 	Group string `json:"group"`
 }
 
+// LoadConfig loads configuration from the specified file
 func LoadConfig(filename string) (*Config, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
@@ -82,13 +90,16 @@ func LoadConfig(filename string) (*Config, error) {
 		return nil, fmt.Errorf("error parsing config file: %w", err)
 	}
 
+	// Store the config for later retrieval
 	globalConfig = &config
 
 	return &config, nil
 }
 
+// Global configuration instance
 var globalConfig *Config
 
+// GetConfig returns the current configuration
 func GetConfig() *Config {
 	return globalConfig
 }

@@ -16,22 +16,28 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// Handler handles HTTP and WebSocket requests
 type Handler struct {
-	agentManager *agent.Manager
-	upgrader     websocket.Upgrader
-	clients      map[*websocket.Conn]bool
-	clientsLock  sync.RWMutex
-	pingInterval time.Duration
-	pongWait     time.Duration
+	agentManager   *agent.Manager
+	upgrader       websocket.Upgrader
+	clients        map[*websocket.Conn]bool
+	clientsLock    sync.RWMutex
+	pingInterval   time.Duration
+	pongWait       time.Duration
+	activeCommands map[string]chan bool // 用于停止命令的通道
+	commandsLock   sync.RWMutex
 }
 
+// CommandRequest represents a command request from the client
 type CommandRequest struct {
-	Type    string `json:"type"`
-	Agent   string `json:"agent,omitempty"`
-	Command string `json:"command,omitempty"`
-	Target  string `json:"target,omitempty"`
+	Type      string `json:"type"`
+	Agent     string `json:"agent,omitempty"`
+	Command   string `json:"command,omitempty"`
+	Target    string `json:"target,omitempty"`
+	CommandID string `json:"command_id,omitempty"`
 }
 
+// CommandResponse represents a command response to the client
 type CommandResponse struct {
 	Success bool   `json:"success"`
 	Agent   string `json:"agent"`
@@ -41,57 +47,81 @@ type CommandResponse struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// StreamingCommandResponse represents a streaming command response
+type StreamingCommandResponse struct {
+	Type      string `json:"type"`
+	Success   bool   `json:"success"`
+	Agent     string `json:"agent"`
+	Command   string `json:"command"`
+	Target    string `json:"target"`
+	Output    string `json:"output"`
+	Error     string `json:"error,omitempty"`
+	IsComplete bool  `json:"is_complete"`
+}
+
+// AgentStatusUpdate represents an agent status update
 type AgentStatusUpdate struct {
 	Type   string                   `json:"type"`
 	Groups []map[string]interface{} `json:"groups"`
 }
 
+// CommandsListResponse represents the response for available commands
 type CommandsListResponse struct {
 	Type     string                    `json:"type"`
 	Commands []validator.CommandDetail `json:"commands"`
 }
 
+// AppConfigResponse represents the application configuration response
 type AppConfigResponse struct {
 	Type    string            `json:"type"`
 	Version string            `json:"version"`
 	Config  map[string]string `json:"config"`
 }
 
+// NewHandler creates a new handler
 func NewHandler(agentManager *agent.Manager, pingInterval, pongWait time.Duration) *Handler {
 	return &Handler{
-		agentManager: agentManager,
+		agentManager:   agentManager,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
 			CheckOrigin: func(r *http.Request) bool {
-				return true
+				return true // Allow all origins in this example
 			},
 		},
-		clients:      make(map[*websocket.Conn]bool),
-		pingInterval: pingInterval,
-		pongWait:     pongWait,
+		clients:        make(map[*websocket.Conn]bool),
+		pingInterval:   pingInterval,
+		pongWait:       pongWait,
+		activeCommands: make(map[string]chan bool),
 	}
 }
 
+// SetupRoutes sets up the HTTP routes
 func (h *Handler) SetupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", h.handleIndex)
 	mux.HandleFunc("/ws", h.handleWebSocket)
 
+	// Serve static files from /web
 	fs := http.FileServer(http.Dir("./web"))
 	mux.Handle("/assets/", fs)
 }
 
+// handleIndex handles the index page
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
+	// Handle specific paths
 	switch r.URL.Path {
 	case "/":
 		http.ServeFile(w, r, "./web/index.html")
 		return
 	default:
+		// Try to serve from /web directory
 		if _, err := http.Dir("./web").Open(r.URL.Path[1:]); err == nil {
 			http.ServeFile(w, r, "./web/"+r.URL.Path[1:])
 			return
 		}
 
+		// Handle SPA routing - serve index.html for all other paths
+		// This implements the rule from _redirects: /* /index.html 200
 		if r.Header.Get("Accept") != "" && !strings.Contains(r.Header.Get("Accept"), "application/json") {
 			http.ServeFile(w, r, "./web/index.html")
 			return
@@ -153,6 +183,7 @@ func (h *Handler) pingClient(conn *websocket.Conn) {
 	}
 }
 
+// readPump handles incoming messages from the client
 func (h *Handler) readPump(conn *websocket.Conn) {
 	defer conn.Close()
 
@@ -178,6 +209,8 @@ func (h *Handler) readPump(conn *websocket.Conn) {
 			h.handleGetConfig(conn)
 		case "execute_command":
 			go h.handleCommand(conn, req)
+		case "stop_command":
+			h.handleStopCommand(req)
 		default:
 			log.Printf("Unknown message type: %s", req.Type)
 		}
@@ -228,17 +261,59 @@ func (h *Handler) handleCommand(conn *websocket.Conn, req CommandRequest) {
 		return
 	}
 
-	// Execute command
-	output, err := h.agentManager.ExecuteCommand(req.Agent, cmd)
+	// 创建停止通道
+	commandID := fmt.Sprintf("%s-%s-%s", req.Command, req.Target, req.Agent)
+	stopChan := make(chan bool, 1)
+	
+	h.commandsLock.Lock()
+	h.activeCommands[commandID] = stopChan
+	h.commandsLock.Unlock()
+
+	// Execute command with streaming output
+	err := h.agentManager.ExecuteCommandStreamingWithStop(req.Agent, cmd, stopChan, func(output string, isError bool, isComplete bool, isStopped bool) {
+		if isStopped {
+			// Send stopped message
+			stoppedResp := CommandResponse{
+				Success: false,
+				Agent:   req.Agent,
+				Command: req.Command,
+				Target:  req.Target,
+				Output:  "*** Stopped ***",
+				Error:   "已取消",
+			}
+			h.sendStreamingResponse(conn, stoppedResp, true)
+		} else if isComplete {
+			// Send completion message
+			resp.Success = true
+			resp.Output = "" // Final message with empty output to signal completion
+			h.sendStreamingResponse(conn, resp, true)
+		} else {
+			// Send streaming output
+			streamResp := CommandResponse{
+				Success: true,
+				Agent:   req.Agent,
+				Command: req.Command,
+				Target:  req.Target,
+				Output:  output,
+			}
+			if isError {
+				streamResp.Error = output
+				streamResp.Output = ""
+			}
+			h.sendStreamingResponse(conn, streamResp, false)
+		}
+	})
+
+	// 清理停止通道
+	h.commandsLock.Lock()
+	delete(h.activeCommands, commandID)
+	h.commandsLock.Unlock()
+
 	if err != nil {
 		resp.Error = err.Error()
 		h.sendResponse(conn, resp)
 		return
 	}
-
-	resp.Success = true
-	resp.Output = output
-	h.sendResponse(conn, resp)
 }
 
 // handleGetCommands handles the get commands request
@@ -263,6 +338,7 @@ func (h *Handler) handleGetCommands(conn *websocket.Conn) {
 	}
 }
 
+// handleGetConfig handles the get_config request
 func (h *Handler) handleGetConfig(conn *websocket.Conn) {
 	cfg := config.GetConfig()
 	if cfg == nil {
@@ -301,6 +377,33 @@ func (h *Handler) sendResponse(conn *websocket.Conn, resp CommandResponse) {
 	}
 }
 
+// sendStreamingResponse sends a streaming response to the client
+func (h *Handler) sendStreamingResponse(conn *websocket.Conn, resp CommandResponse, isComplete bool) {
+	streamResp := StreamingCommandResponse{
+		Type:       "command_output",
+		Success:    resp.Success,
+		Agent:      resp.Agent,
+		Command:    resp.Command,
+		Target:     resp.Target,
+		Output:     resp.Output,
+		Error:      resp.Error,
+		IsComplete: isComplete,
+	}
+
+	data, err := json.Marshal(streamResp)
+	if err != nil {
+		log.Printf("Failed to marshal streaming response: %v", err)
+		return
+	}
+
+	h.clientsLock.RLock()
+	defer h.clientsLock.RUnlock()
+
+	if _, ok := h.clients[conn]; ok {
+		conn.WriteMessage(websocket.TextMessage, data)
+	}
+}
+
 // sendAgentStatus sends the agent status to a client
 func (h *Handler) sendAgentStatus(conn *websocket.Conn) {
 	groups := h.agentManager.GetAgentGroups()
@@ -316,6 +419,22 @@ func (h *Handler) sendAgentStatus(conn *websocket.Conn) {
 	}
 
 	conn.WriteMessage(websocket.TextMessage, data)
+}
+
+// handleStopCommand handles a stop command request
+func (h *Handler) handleStopCommand(req CommandRequest) {
+	if req.CommandID == "" {
+		log.Printf("Stop command request missing command_id")
+		return
+	}
+
+	h.commandsLock.Lock()
+	if stopChan, exists := h.activeCommands[req.CommandID]; exists {
+		close(stopChan) // 发送停止信号
+		delete(h.activeCommands, req.CommandID)
+		log.Printf("Sent stop signal for command: %s", req.CommandID)
+	}
+	h.commandsLock.Unlock()
 }
 
 // BroadcastAgentStatus broadcasts agent status to all clients

@@ -2,6 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 移动端字体优化 */
 html {
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
@@ -24,6 +25,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* 移动端触摸优化 */
 @media (hover: none) and (pointer: coarse) {
   button, 
   [role="button"], 
@@ -33,4 +35,46 @@ body {
     min-height: 44px;
     min-width: 44px;
   }
+}
+
+/* xterm.js 终端样式优化 */
+.terminal {
+  border-radius: 0.5rem !important; /* 确保圆边效果 */
+  overflow: hidden !important; /* 防止任何内容溢出 */
+}
+
+/* 隐藏 xterm.js 终端的滚动条 - 应用到所有可能的元素 */
+.terminal::-webkit-scrollbar,
+.xterm-rows::-webkit-scrollbar,
+.xterm-screen::-webkit-scrollbar {
+  display: none !important; /* Chrome, Safari, Edge */
+}
+
+.terminal,
+.xterm-rows,
+.xterm-screen {
+  -ms-overflow-style: none !important; /* IE and Edge */
+  scrollbar-width: none !important; /* Firefox */
+  overflow: hidden !important; /* 确保内容不会触发滚动条 */
+}
+
+/* 确保 xterm.js 内部元素也应用圆边样式 */
+.xterm-screen {
+  border-radius: 0.5rem !important;
+}
+
+/* 设置终端内容与边缘的间距为5像素 */
+.xterm {
+  padding: 5px !important;
+}
+
+.xterm-rows {
+  padding: 0 !important;
+}
+
+/* 确保终端容器能够动态变换大小 */
+div[ref="terminalRef"] {
+  min-height: 120px;
+  height: auto !important;
+  flex-grow: 1;
 }

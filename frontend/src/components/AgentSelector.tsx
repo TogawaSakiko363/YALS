@@ -95,8 +95,10 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
   const [selectedGroup, setSelectedGroup] = useState('all');
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
 
+  // 从后端groups数据中提取分组配置（支持有序数组格式）
   const groupConfig = React.useMemo(() => {
     if (Array.isArray(groups)) {
+      // 新格式：有序数组
       return groups
         .filter(group => Array.isArray(group.agents))
         .map(group => ({
@@ -104,6 +106,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
           agents: group.agents.map(agent => agent.name)
         }));
     } else {
+      // 旧格式：对象
       return Object.entries(groups)
         .filter(([, agents]) => Array.isArray(agents))
         .map(([groupName, agents]) => ({
@@ -113,6 +116,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
     }
   }, [groups]);
 
+  // 根据选择的分组过滤agents
   const filteredAgents = React.useMemo(() => {
     if (selectedGroup === 'all') {
       if (Array.isArray(groups)) {
