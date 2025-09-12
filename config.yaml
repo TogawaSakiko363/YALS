@@ -81,4 +81,4 @@ connection:
   timeout: 10        # seconds
   keepalive: 60      # seconds
   retry_interval: 10 # seconds
-  max_retries: 999
+  max_retries: 0     # 0 = infinite retries, >0 = limited retries
