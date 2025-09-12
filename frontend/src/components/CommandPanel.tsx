@@ -128,13 +128,20 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({
               />
             </div>
 
-            {/* 执行和停止按钮 */}
-            <div className="ml-1 flex gap-2">
-              {/* Run按钮 */}
+            {/* 合并的执行/停止按钮 */}
+            <div className="ml-1">
               <button
-                onClick={handleExecute}
-                disabled={!canExecute || isCommandActive}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${canExecute && !isCommandActive
+                onClick={() => {
+                  if (isCommandActive) {
+                    onStopCommand?.();
+                  } else {
+                    handleExecute();
+                  }
+                }}
+                disabled={(!canExecute && !isCommandActive) || !onStopCommand}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${isCommandActive
+                  ? 'bg-red-600 text-white hover:bg-red-700 shadow-sm hover:shadow-md'
+                  : canExecute
                   ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm hover:shadow-md'
                   : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                   }`}
@@ -145,21 +152,7 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({
                 ) : (
                   <Play className="w-3.5 h-3.5" />
                 )}
-                Run
-              </button>
-
-              {/* Stop按钮 */}
-              <button
-                onClick={onStopCommand}
-                disabled={!isCommandActive}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${isCommandActive
-                  ? 'bg-red-600 text-white hover:bg-red-700 shadow-sm hover:shadow-md'
-                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                  }`}
-                style={{ height: '36px' }}
-              >
-                <Square className="w-3.5 h-3.5" />
-                Stop
+                {isExecuting || isCommandActive ? 'Stop' : 'Run'}
               </button>
             </div>
           </div>
