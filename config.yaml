@@ -2,7 +2,7 @@
 
 # Application settings
 app:
-  version: "2.0.0-beta"
+  version: "2.1.1-alpha"
 
 # Server settings
 server:
