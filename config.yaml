@@ -82,3 +82,4 @@ connection:
   keepalive: 60      # seconds
   retry_interval: 10 # seconds
   max_retries: 0     # 0 = infinite retries, >0 = limited retries
+  offline_after_retries: 3 # define as offline after retries for 3 time
