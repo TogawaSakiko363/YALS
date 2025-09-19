@@ -39,13 +39,16 @@ type Manager struct {
 	agents     map[string]*Agent
 	config     *config.Config
 	agentsLock sync.RWMutex
+	offlineCheckerTicker *time.Ticker
+	offlineCheckerDone  chan bool
 }
 
 // NewManager creates a new agent manager
 func NewManager(cfg *config.Config) *Manager {
 	manager := &Manager{
-		agents: make(map[string]*Agent),
-		config: cfg,
+		agents:              make(map[string]*Agent),
+		config:              cfg,
+		offlineCheckerDone:  make(chan bool),
 	}
 
 	// Initialize agents from config
@@ -56,6 +59,9 @@ func NewManager(cfg *config.Config) *Manager {
 		}
 		manager.agents[agentCfg.Name] = agent
 	}
+
+	// Start offline agent checker
+	go manager.startOfflineAgentChecker()
 
 	return manager
 }
@@ -69,6 +75,59 @@ func (m *Manager) Connect() {
 	for _, agent := range m.agents {
 		log.Printf("Initiating connection to agent: %s (%s:%d)", agent.Config.Name, agent.Config.Host, agent.Config.Port)
 		go m.connectAgent(agent)
+	}
+}
+
+// startOfflineAgentChecker starts a background task that periodically checks offline agents
+func (m *Manager) startOfflineAgentChecker() {
+	// Check every 60 seconds by default
+	checkInterval := 60
+	if m.config.Connection.RetryInterval > 0 {
+		// Use retry interval from configuration
+		checkInterval = m.config.Connection.RetryInterval
+	}
+
+	m.offlineCheckerTicker = time.NewTicker(time.Duration(checkInterval) * time.Second)
+	defer m.offlineCheckerTicker.Stop()
+
+	log.Printf("Starting offline agent checker with interval %d seconds", checkInterval)
+
+	// Check immediately on startup
+	m.checkOfflineAgents()
+
+	for {
+		select {
+		case <-m.offlineCheckerTicker.C:
+			m.checkOfflineAgents()
+		case <-m.offlineCheckerDone:
+			log.Println("Offline agent checker stopped")
+			return
+		}
+	}
+}
+
+// checkOfflineAgents checks all offline agents and tries to reconnect
+func (m *Manager) checkOfflineAgents() {
+	m.agentsLock.RLock()
+	offlineAgents := make([]*Agent, 0)
+	for _, agent := range m.agents {
+		if agent.Status() == StatusDisconnected {
+			offlineAgents = append(offlineAgents, agent)
+		}
+	}
+	m.agentsLock.RUnlock()
+
+	if len(offlineAgents) > 0 {
+		log.Printf("Checking %d offline agents for reconnection", len(offlineAgents))
+		for _, agent := range offlineAgents {
+			go func(a *Agent) {
+				// Try to connect to offline agent
+				m.connectAgent(a)
+				if a.Status() == StatusConnected {
+					log.Printf("Successfully reconnected to offline agent: %s", a.Config.Name)
+				}
+			}(agent)
+		}
 	}
 }
 
@@ -172,30 +231,39 @@ func (m *Manager) keepAlive(agent *Agent) {
 // reconnect attempts to reconnect to an agent
 func (m *Manager) reconnect(agent *Agent) {
 	log.Printf("Starting reconnection attempts for agent %s", agent.Config.Name)
-	retries := 0
+	offlineAfterRetries := m.config.Connection.OfflineAfterRetries
 	maxRetries := m.config.Connection.MaxRetries
+	retries := 0
 	retryInterval := m.config.Connection.RetryInterval
-	
-	// If maxRetries is 0, retry indefinitely
-	infiniteRetries := maxRetries == 0
 
-	for infiniteRetries || retries < maxRetries {
+	// 尝试重连直到成功或达到最大重试次数（如果设置了）
+	for {
 		retries++
-		if infiniteRetries {
-			log.Printf("Reconnection attempt %d (infinite retries) for agent %s", retries, agent.Config.Name)
-		} else {
-			log.Printf("Reconnection attempt %d/%d for agent %s", retries, maxRetries, agent.Config.Name)
+		
+		// 如果设置了最大重试次数，并且已经达到，则停止重连
+		if maxRetries > 0 && retries > maxRetries {
+			log.Printf("Max retries (%d) reached for agent %s, stopping reconnection attempts", maxRetries, agent.Config.Name)
+			break
 		}
 		
+		log.Printf("Reconnection attempt %d for agent %s", retries, agent.Config.Name)
+
 		time.Sleep(time.Duration(retryInterval) * time.Second)
 		m.connectAgent(agent)
 		if agent.Status() == StatusConnected {
 			log.Printf("Successfully reconnected to agent %s on attempt %d", agent.Config.Name, retries)
 			return
 		}
+		
+		// 在指定次数失败后标记为离线，但继续尝试重连
+		if offlineAfterRetries > 0 && retries >= offlineAfterRetries && agent.Status() != StatusDisconnected {
+			log.Printf("Failed to reconnect to agent %s after %d attempts, marking as offline", agent.Config.Name, offlineAfterRetries)
+			agent.setStatus(StatusDisconnected)
+		}
 	}
-
-	log.Printf("Failed to reconnect to agent %s after %d attempts", agent.Config.Name, maxRetries)
+	
+	// 如果循环退出（达到最大重试次数），标记为离线
+	agent.setStatus(StatusDisconnected)
 }
 
 // ExecuteCommand executes a command on an agent
@@ -303,7 +371,7 @@ func (m *Manager) ExecuteCommandStreaming(agentName, command string, callback St
 
 	// For non-mtr commands, use standard streaming
 	needsPTY := false
-	
+
 	if needsPTY {
 		// Request a PTY for mtr interactive mode
 		err = session.RequestPty("xterm-256color", 24, 80, ssh.TerminalModes{
@@ -314,40 +382,40 @@ func (m *Manager) ExecuteCommandStreaming(agentName, command string, callback St
 		if err != nil {
 			return fmt.Errorf("failed to request PTY: %w", err)
 		}
-		
+
 		// For PTY mode, use combined output
-		output, err := session.StdoutPipe()
-		if err != nil {
-			return fmt.Errorf("failed to get output pipe: %w", err)
+		output, outputErr := session.StdoutPipe()
+		if outputErr != nil {
+			return fmt.Errorf("failed to get output pipe: %w", outputErr)
 		}
 
-		err = session.Start(command)
-		if err != nil {
-			return fmt.Errorf("failed to start command: %w", err)
+		startErr := session.Start(command)
+		if startErr != nil {
+			return fmt.Errorf("failed to start command: %w", startErr)
 		}
 
 		// Create channels for coordinating goroutines
 		done := make(chan error, 1)
 		outputDone := make(chan bool, 1)
-		
+
 		// Read PTY output with improved ANSI filtering for mtr
 		go func() {
 			defer func() { outputDone <- true }()
 			reader := bufio.NewReader(output)
 			var buffer []byte
 			var lastSentLines []string
-			
+
 			for {
-				char, err := reader.ReadByte()
-				if err != nil {
-					if err != io.EOF {
-						callback(fmt.Sprintf("Error reading output: %v", err), true, false)
+				char, readErr := reader.ReadByte()
+				if readErr != nil {
+					if readErr != io.EOF {
+						callback(fmt.Sprintf("Error reading output: %v", readErr), true, false)
 					}
 					break
 				}
-				
+
 				buffer = append(buffer, char)
-				
+
 				// Process buffer periodically or when we hit line endings
 				if char == '\n' || char == '\r' || len(buffer) > 2048 {
 					processed := m.processAnsiBuffer(buffer)
@@ -355,11 +423,11 @@ func (m *Manager) ExecuteCommandStreaming(agentName, command string, callback St
 						// Clean up the processed text
 						processed = strings.ReplaceAll(processed, "\r\n", "\n")
 						processed = strings.ReplaceAll(processed, "\r", "\n")
-						
+
 						// Split into lines
 						lines := strings.Split(processed, "\n")
 						var validLines []string
-						
+
 						for _, line := range lines {
 							line = strings.TrimSpace(line)
 							// Filter out empty lines and lines with only special characters
@@ -367,14 +435,14 @@ func (m *Manager) ExecuteCommandStreaming(agentName, command string, callback St
 								validLines = append(validLines, line)
 							}
 						}
-						
+
 						// Send new or updated lines
 						for _, line := range validLines {
 							// Check if this line is significantly different from what we sent before
 							if !containsSimilarLine(lastSentLines, line) {
 								callback(line, false, false)
 								lastSentLines = append(lastSentLines, line)
-								
+
 								// Keep only recent lines to avoid memory growth
 								if len(lastSentLines) > 50 {
 									lastSentLines = lastSentLines[len(lastSentLines)-25:]
@@ -385,7 +453,7 @@ func (m *Manager) ExecuteCommandStreaming(agentName, command string, callback St
 					buffer = buffer[:0] // Clear buffer
 				}
 			}
-			
+
 			// Process any remaining buffer content
 			if len(buffer) > 0 {
 				processed := m.processAnsiBuffer(buffer)
@@ -407,19 +475,19 @@ func (m *Manager) ExecuteCommandStreaming(agentName, command string, callback St
 		}()
 
 		// Wait for completion and all output to be read
-		err = <-done
+		<-done
 		<-outputDone
-		
+
 	} else {
 		// Standard mode for other commands
-		stdout, err := session.StdoutPipe()
-		if err != nil {
-			return fmt.Errorf("failed to get stdout pipe: %w", err)
+		stdout, stdoutErr := session.StdoutPipe()
+		if stdoutErr != nil {
+			return fmt.Errorf("failed to get stdout pipe: %w", stdoutErr)
 		}
 
-		stderr, err := session.StderrPipe()
-		if err != nil {
-			return fmt.Errorf("failed to get stderr pipe: %w", err)
+		stderr, stderrErr := session.StderrPipe()
+		if stderrErr != nil {
+			return fmt.Errorf("failed to get stderr pipe: %w", stderrErr)
 		}
 
 		err = session.Start(command)
@@ -431,7 +499,7 @@ func (m *Manager) ExecuteCommandStreaming(agentName, command string, callback St
 		done := make(chan error, 1)
 		stdoutDone := make(chan bool, 1)
 		stderrDone := make(chan bool, 1)
-		
+
 		// Start goroutines to read stdout and stderr
 		go func() {
 			defer func() { stdoutDone <- true }()
@@ -439,8 +507,8 @@ func (m *Manager) ExecuteCommandStreaming(agentName, command string, callback St
 			for scanner.Scan() {
 				callback(scanner.Text(), false, false)
 			}
-			if err := scanner.Err(); err != nil {
-				callback(fmt.Sprintf("Error reading stdout: %v", err), true, false)
+			if scanErr := scanner.Err(); scanErr != nil {
+				callback(fmt.Sprintf("Error reading stdout: %v", scanErr), true, false)
 			}
 		}()
 
@@ -450,8 +518,8 @@ func (m *Manager) ExecuteCommandStreaming(agentName, command string, callback St
 			for scanner.Scan() {
 				callback(scanner.Text(), true, false)
 			}
-			if err := scanner.Err(); err != nil {
-				callback(fmt.Sprintf("Error reading stderr: %v", err), true, false)
+			if scanErr := scanner.Err(); scanErr != nil {
+				callback(fmt.Sprintf("Error reading stderr: %v", scanErr), true, false)
 			}
 		}()
 
@@ -461,13 +529,13 @@ func (m *Manager) ExecuteCommandStreaming(agentName, command string, callback St
 		}()
 
 		// Wait for completion and all output to be read
-		err = <-done
+		<-done
 		<-stdoutDone
 		<-stderrDone
 	}
-	
+
 	callback("", false, true) // Signal completion
-	
+
 	if err != nil {
 		return fmt.Errorf("command execution failed: %w", err)
 	}
@@ -508,7 +576,7 @@ func (m *Manager) ExecuteCommandStreamingWithStop(agentName, command string, sto
 						return
 					default:
 					}
-					
+
 					if strings.TrimSpace(line) != "" {
 						callback(line, false, false, false)
 					}
@@ -534,19 +602,19 @@ func (m *Manager) ExecuteCommandStreamingWithStop(agentName, command string, sto
 	defer session.Close()
 
 	// For non-mtr commands, use standard streaming with stop support
-	stdout, err := session.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("failed to get stdout pipe: %w", err)
+	stdout, stdoutErr := session.StdoutPipe()
+	if stdoutErr != nil {
+		return fmt.Errorf("failed to get stdout pipe: %w", stdoutErr)
 	}
 
-	stderr, err := session.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("failed to get stderr pipe: %w", err)
+	stderr, stderrErr := session.StderrPipe()
+	if stderrErr != nil {
+		return fmt.Errorf("failed to get stderr pipe: %w", stderrErr)
 	}
 
-	err = session.Start(command)
-	if err != nil {
-		return fmt.Errorf("failed to start command: %w", err)
+	startErr := session.Start(command)
+	if startErr != nil {
+		return fmt.Errorf("failed to start command: %w", startErr)
 	}
 
 	// Create channels for coordinating goroutines
@@ -568,8 +636,8 @@ func (m *Manager) ExecuteCommandStreamingWithStop(agentName, command string, sto
 				callback(scanner.Text(), false, false, false)
 			}
 		}
-		if err := scanner.Err(); err != nil {
-			callback(fmt.Sprintf("Error reading stdout: %v", err), true, false, false)
+		if scanErr := scanner.Err(); scanErr != nil {
+			callback(fmt.Sprintf("Error reading stdout: %v", scanErr), true, false, false)
 		}
 	}()
 
@@ -585,8 +653,8 @@ func (m *Manager) ExecuteCommandStreamingWithStop(agentName, command string, sto
 				callback(scanner.Text(), true, false, false)
 			}
 		}
-		if err := scanner.Err(); err != nil {
-			callback(fmt.Sprintf("Error reading stderr: %v", err), true, false, false)
+		if scanErr := scanner.Err(); scanErr != nil {
+			callback(fmt.Sprintf("Error reading stderr: %v", scanErr), true, false, false)
 		}
 	}()
 
@@ -621,15 +689,15 @@ func (m *Manager) ExecuteCommandStreamingWithStop(agentName, command string, sto
 func (m *Manager) processAnsiBuffer(buffer []byte) string {
 	var result strings.Builder
 	i := 0
-	
+
 	for i < len(buffer) {
 		char := buffer[i]
-		
+
 		// Handle ANSI escape sequences
 		if char == '\x1b' && i+1 < len(buffer) {
 			i++ // Skip ESC
 			next := buffer[i]
-			
+
 			if next == '[' {
 				// CSI (Control Sequence Introducer) sequences: ESC[...
 				i++ // Skip [
@@ -639,7 +707,7 @@ func (m *Manager) processAnsiBuffer(buffer []byte) string {
 					// Parameters: 0-9, ;, :
 					// Intermediate: space to /
 					// Final: @ to ~
-					if (c >= '@' && c <= '~') {
+					if c >= '@' && c <= '~' {
 						i++ // Skip the final character
 						break
 					}
@@ -663,7 +731,7 @@ func (m *Manager) processAnsiBuffer(buffer []byte) string {
 			}
 			continue
 		}
-		
+
 		// Handle other control characters
 		switch char {
 		case '\r':
@@ -685,7 +753,7 @@ func (m *Manager) processAnsiBuffer(buffer []byte) string {
 			// Only include printable ASCII characters and extended ASCII
 			if char >= 32 && char <= 126 {
 				result.WriteByte(char)
-			} else if char >= 160 && char <= 255 {
+			} else if char >= 160 {
 				// Extended ASCII characters
 				result.WriteByte(char)
 			}
@@ -693,7 +761,7 @@ func (m *Manager) processAnsiBuffer(buffer []byte) string {
 		}
 		i++
 	}
-	
+
 	return result.String()
 }
 
@@ -702,13 +770,13 @@ func isOnlySpecialChars(line string) bool {
 	if len(line) == 0 {
 		return true
 	}
-	
+
 	for _, char := range line {
 		// If we find any alphanumeric character or common punctuation, it's valid
-		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || 
-		   (char >= '0' && char <= '9') || char == '.' || char == '-' || 
-		   char == ':' || char == '%' || char == '(' || char == ')' ||
-		   char == '[' || char == ']' || char == ' ' || char == '|' {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '.' || char == '-' ||
+			char == ':' || char == '%' || char == '(' || char == ')' ||
+			char == '[' || char == ']' || char == ' ' || char == '|' {
 			return false
 		}
 	}
@@ -722,13 +790,13 @@ func containsSimilarLine(lines []string, newLine string) bool {
 		if existingLine == newLine {
 			return true
 		}
-		
+
 		// Check for similar content (for mtr updates)
 		if len(existingLine) > 10 && len(newLine) > 10 {
 			// Extract the host part (before the first space or tab)
 			existingHost := strings.Fields(existingLine)
 			newHost := strings.Fields(newLine)
-			
+
 			if len(existingHost) > 0 && len(newHost) > 0 {
 				// If it's the same host, consider it similar
 				if existingHost[0] == newHost[0] {
@@ -784,15 +852,15 @@ func (m *Manager) GetAgentGroups() []map[string]interface{} {
 
 	// Create a map for quick lookup
 	groupMap := make(map[string][]map[string]interface{})
-	
+
 	// Initialize groups in config order
 	for _, group := range m.config.Groups {
 		groupMap[group.Name] = make([]map[string]interface{}, 0)
 	}
-	
+
 	// Handle ungrouped agents
 	ungrouped := make([]map[string]interface{}, 0)
-	
+
 	// Organize agents by group, maintaining config order
 	for _, group := range m.config.Groups {
 		for _, agentName := range group.Agents {
@@ -813,7 +881,7 @@ func (m *Manager) GetAgentGroups() []map[string]interface{} {
 			}
 		}
 	}
-	
+
 	// Handle ungrouped agents
 	for name, agent := range m.agents {
 		groupName := m.getAgentGroup(name)
@@ -833,10 +901,10 @@ func (m *Manager) GetAgentGroups() []map[string]interface{} {
 			ungrouped = append(ungrouped, agentInfo)
 		}
 	}
-	
+
 	// Build ordered result
 	result := make([]map[string]interface{}, 0)
-	
+
 	// Add groups in config order
 	for _, group := range m.config.Groups {
 		if len(groupMap[group.Name]) > 0 {
@@ -846,7 +914,7 @@ func (m *Manager) GetAgentGroups() []map[string]interface{} {
 			})
 		}
 	}
-	
+
 	// Add ungrouped agents at the end
 	if len(ungrouped) > 0 {
 		result = append(result, map[string]interface{}{
@@ -854,7 +922,7 @@ func (m *Manager) GetAgentGroups() []map[string]interface{} {
 			"agents": ungrouped,
 		})
 	}
-	
+
 	return result
 }
 

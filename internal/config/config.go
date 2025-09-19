@@ -30,10 +30,11 @@ type Config struct {
 	Agents []Agent `yaml:"agents"`
 
 	Connection struct {
-		Timeout       int `yaml:"timeout"`
-		Keepalive     int `yaml:"keepalive"`
-		RetryInterval int `yaml:"retry_interval"`
-		MaxRetries    int `yaml:"max_retries"`
+		Timeout           int `yaml:"timeout"`
+		Keepalive         int `yaml:"keepalive"`
+		RetryInterval     int `yaml:"retry_interval"`
+		MaxRetries        int `yaml:"max_retries"`
+		OfflineAfterRetries int `yaml:"offline_after_retries"`
 	} `yaml:"connection"`
 
 	Commands map[string]CommandConfig `yaml:"commands"`
