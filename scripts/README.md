@@ -16,16 +16,11 @@
 
 ## 使用方法
 
-1. 将脚本上传到目标Linux服务器
-2. 赋予脚本执行权限：
+1. 一键启动
    ```
-   chmod +x setup_agent.sh
+   bash <(curl -sL https://raw.githubusercontent.com/TogawaSakiko363/YALS/refs/heads/main/scripts/setup_agent.sh)
    ```
-3. 以root权限运行脚本：
-   ```
-   sudo ./setup_agent.sh
-   ```
-4. 脚本执行完成后，会显示创建的用户名和随机生成的密码
+2. 脚本执行完成后，会显示创建的用户名和随机生成的密码
 
 ## 注意事项
 
