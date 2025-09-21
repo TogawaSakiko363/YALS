@@ -33,6 +33,8 @@ SharonNetworks 为您的业务起飞保驾护航！
 
 ## 实战案例
   [Sharon Networks](https://lg.sharon.io)
+  
+  [LeiKwan Host](https://routing.leikwanhost.com/)
 
 ## 系统要求
 
