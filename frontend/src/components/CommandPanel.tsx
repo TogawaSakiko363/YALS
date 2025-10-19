@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Play, Terminal, Square, Loader2 } from 'lucide-react';
+import { Play, Terminal, Loader2 } from 'lucide-react';
 import { CommandType } from '../types/yals';
-import { Terminal as XTermComponent } from './Terminal';
 
 interface CommandPanelProps {
   selectedAgent: string | null;
@@ -76,123 +75,207 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({
   const isCommandActive = activeCommands.has(commandId);
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 flex flex-col">
-      <div className="flex items-center gap-2 mb-3">
-        <Terminal className="w-4 h-4 text-gray-600" />
-        <h2 className="text-base font-semibold text-gray-900">网络测试</h2>
-      </div>
-
-      <div className="space-y-4 flex-1 flex flex-col">
-        {!hasCommands && (
-          <div className="text-center py-8 text-gray-500">
-            <Terminal className="w-12 h-12 mx-auto mb-2 text-gray-300" />
-            <p>暂无可用命令</p>
-          </div>
-        )}
-
-        {hasCommands && (
-          <div className="flex items-end gap-2">
-            {/* 命令选择下拉菜单 */}
-            <div className="shrink-0">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                命令类型
-              </label>
-              <select
-                value={selectedCommand}
-                onChange={(e) => setSelectedCommand(e.target.value as CommandType)}
-                className="w-auto min-w-[80px] px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white"
-                disabled={!isConnected || !selectedAgent || isCommandActive}
-              >
-                {commandOptions.map((cmd) => (
-                  <option key={cmd.value} value={cmd.value}>
-                    {cmd.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* 目标输入 - 占据剩余空间 */}
-            <div className="flex-grow min-w-[150px]">
-              <label htmlFor="target" className="block text-sm font-medium text-gray-700 mb-1">
-                目标地址
-              </label>
-              <input
-                id="target"
-                type="text"
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="Enter the target"
-                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                disabled={!isConnected || !selectedAgent || isCommandActive}
-              />
-            </div>
-
-            {/* 合并的执行/停止按钮 */}
-            <div className="ml-1">
-              <button
-                onClick={() => {
-                  if (isCommandActive) {
-                    onStopCommand?.();
-                  } else {
-                    handleExecute();
-                  }
-                }}
-                disabled={(!canExecute && !isCommandActive) || !onStopCommand}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${isCommandActive
-                  ? 'bg-red-600 text-white hover:bg-red-700 shadow-sm hover:shadow-md'
-                  : canExecute
-                  ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm hover:shadow-md'
-                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                  }`}
-                style={{ height: '36px' }}
-              >
-                {isExecuting || isCommandActive ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Play className="w-3.5 h-3.5" />
-                )}
-                {isExecuting || isCommandActive ? 'Stop' : 'Run'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* 状态提示 */}
-        <div className="text-xs text-gray-600 mt-1">
-          {!isConnected ? (
-            <span className="text-red-600">请先连接服务器</span>
-          ) : !selectedAgent ? (
-            <span className="text-yellow-600">请选择代理节点</span>
-          ) : (
-            <span>节点: <strong>{selectedAgent}</strong>   命令功能: {commandOptions.find(cmd => cmd.value === selectedCommand)?.description || '未知'}</span>
-          )}
+    <div className="command-panel-container">
+      {/* 网络测试容器 */}
+      <div className="command-test-container">
+        <div className="panel-title">
+          <Terminal className="panel-title-icon" />
+          <h2 className="panel-title-text">网络测试</h2>
         </div>
 
-        {/* 美化的终端输出区域 */}
-        <div className="mt-6">
-          <div className="bg-gray-800 rounded-lg shadow-lg overflow-hidden">
-            {/* Terminal Header with macOS style dots */}
-            <div className="bg-gray-700 px-4 py-3 flex items-center">
-              <div className="flex space-x-2">
-                <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-                <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
-                <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-              </div>
-              <div className="flex-1 text-center">
-                <span className="text-gray-300 text-sm font-medium">Terminal</span>
-              </div>
+        <div className="space-y-4">
+          {!hasCommands && (
+            <div className="text-center py-8 text-gray-500">
+              <Terminal className="w-12 h-12 mx-auto mb-2 text-gray-300" />
+              <p>暂无可用命令</p>
             </div>
+          )}
 
-            {/* Terminal Content */}
-            <div className="p-4 min-h-[300px]">
-              <XTermComponent
-                output={latestOutput}
-                streamingOutput={currentCommandId ? streamingOutputs?.get(currentCommandId) : undefined}
-                isStreaming={currentCommandId ? activeCommands.has(currentCommandId) : false}
-              />
+          {hasCommands && (
+            <div className="space-y-3">
+              {/* 大屏幕布局：水平排列 */}
+              <div className="command-actions-desktop">
+                {/* 命令选择下拉菜单 */}
+                <div className="command-select-container">
+                  <label className="command-label">
+                    命令类型
+                  </label>
+                  <select
+                    value={selectedCommand}
+                    onChange={(e) => setSelectedCommand(e.target.value as CommandType)}
+                    className="command-select"
+                    disabled={!isConnected || !selectedAgent || isCommandActive}
+                  >
+                    {commandOptions.map((cmd) => (
+                      <option key={cmd.value} value={cmd.value}>
+                        {cmd.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 目标输入 - 占据剩余空间 */}
+                <div className="command-target-container">
+                  <label htmlFor="target" className="command-label">
+                    目标地址
+                  </label>
+                  <input
+                    id="target"
+                    type="text"
+                    value={target}
+                    onChange={(e) => setTarget(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    placeholder="Enter the target"
+                    className="command-target-input"
+                    disabled={!isConnected || !selectedAgent || isCommandActive}
+                  />
+                </div>
+
+                {/* 执行/停止按钮 */}
+                <div className="command-button-container">
+                  <button
+                    onClick={() => {
+                      if (isCommandActive) {
+                        onStopCommand?.();
+                      } else {
+                        handleExecute();
+                      }
+                    }}
+                    disabled={(!canExecute && !isCommandActive) || !onStopCommand}
+                    className={`command-button ${
+                      isCommandActive ? 'danger' : canExecute ? 'primary' : ''
+                    }`}
+                  >
+                    {isExecuting || isCommandActive ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Play className="w-3.5 h-3.5" />
+                    )}
+                    {isExecuting || isCommandActive ? 'Stop' : 'Run'}
+                  </button>
+                </div>
+              </div>
+              
+              {/* 小屏幕布局：垂直排列 */}
+              <div className="command-actions-mobile">
+                {/* 命令选择下拉菜单 */}
+                <div>
+                  <label className="command-label">
+                    命令类型
+                  </label>
+                  <select
+                    value={selectedCommand}
+                    onChange={(e) => setSelectedCommand(e.target.value as CommandType)}
+                    className="command-select w-full"
+                    disabled={!isConnected || !selectedAgent || isCommandActive}
+                  >
+                    {commandOptions.map((cmd) => (
+                      <option key={cmd.value} value={cmd.value}>
+                        {cmd.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 目标输入 */}
+                <div>
+                  <label htmlFor="target" className="command-label">
+                    目标地址
+                  </label>
+                  <input
+                    id="target"
+                    type="text"
+                    value={target}
+                    onChange={(e) => setTarget(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    placeholder="Enter the target"
+                    className="command-target-input"
+                    disabled={!isConnected || !selectedAgent || isCommandActive}
+                  />
+                </div>
+
+                {/* 执行/停止按钮 */}
+                <div>
+                  <button
+                    onClick={() => {
+                      if (isCommandActive) {
+                        onStopCommand?.();
+                      } else {
+                        handleExecute();
+                      }
+                    }}
+                    disabled={(!canExecute && !isCommandActive) || !onStopCommand}
+                    className={`command-button command-button-full-width ${
+                      isCommandActive ? 'danger' : canExecute ? 'primary' : ''
+                    }`}
+                  >
+                    {isExecuting || isCommandActive ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Play className="w-3.5 h-3.5" />
+                    )}
+                    {isExecuting || isCommandActive ? 'Stop' : 'Run'}
+                  </button>
+                </div>
+              </div>
             </div>
+          )}
+
+          {/* 状态提示 */}
+          <div className="command-status">
+            {!isConnected ? (
+              <span className="command-status error">请先连接服务器</span>
+            ) : !selectedAgent ? (
+              <span className="command-status warning">请选择节点</span>
+            ) : (
+              <span>节点: <strong>{selectedAgent}</strong>   命令功能: {commandOptions.find(cmd => cmd.value === selectedCommand)?.description || '未知'}</span>
+            )}
           </div>
+        </div>
+      </div>
+
+      {/* 直接显示终端容器，移除外层的白色卡片容器 */}
+      <div className="terminal-container">
+        {/* Terminal Header with macOS style dots */}
+        <div className="terminal-header">
+          <div className="terminal-dots">
+            <div className="terminal-dot red"></div>
+            <div className="terminal-dot yellow"></div>
+            <div className="terminal-dot green"></div>
+          </div>
+          <div className="terminal-title">
+            <span className="terminal-title-text">Terminal</span>
+          </div>
+        </div>
+
+        {/* Terminal Content */}
+        <div className="terminal-content">
+          {(() => {
+            // 获取当前命令的输出
+            const streamingOutput = currentCommandId ? streamingOutputs?.get(currentCommandId) : undefined;
+            const isStreaming = currentCommandId ? activeCommands.has(currentCommandId) : false;
+            
+            // 优先显示流式输出，如果没有流式输出则显示最终输出
+            let displayOutput: string | null | undefined;
+            if (isStreaming && streamingOutput !== undefined && streamingOutput !== '') {
+              displayOutput = streamingOutput;
+            } else if (latestOutput !== null && latestOutput !== undefined && latestOutput !== '') {
+              displayOutput = latestOutput;
+            } else if (streamingOutput !== undefined && streamingOutput !== '') {
+              // 命令完成但没有最终输出时，显示流式输出的内容
+              displayOutput = streamingOutput;
+            } else {
+              displayOutput = null;
+            }
+            
+            if (displayOutput === null || displayOutput === undefined) {
+              return '请在上方选择命令类型和目标地址，然后点击"Run"开始测试';
+            } else if (displayOutput && displayOutput.length > 0) {
+              return displayOutput;
+            } else {
+              return '命令执行完成，无输出内容';
+            }
+          })()}
         </div>
       </div>
     </div>

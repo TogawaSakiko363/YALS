@@ -11,11 +11,11 @@ const AgentDetails: React.FC<AgentDetailsProps> = ({ agent, isExpanded }) => {
   if (!isExpanded || !agent.details) return null;
 
   return (
-    <div className="px-3 pb-3 pt-1 border-t border-gray-100">
-      <p className="text-xs text-gray-500">
+    <div className="agent-details">
+      <p className="agent-details-text">
         <span className="font-medium">测试IP:</span> {agent.details.test_ip}
       </p>
-      <p className="text-xs text-gray-500 mt-1">
+      <p className="agent-details-text">
         {agent.details.description}
       </p>
     </div>
@@ -39,23 +39,15 @@ const AgentItem: React.FC<AgentItemProps> = ({
   onToggle
 }) => {
   const StatusIcon = isOnline ? CheckCircle : XCircle;
-  const statusColor = isOnline ? 'text-green-500' : 'text-gray-400';
-  const containerClass = isOnline 
-    ? `rounded-lg border transition-all duration-200 ${
-        isSelected
-          ? 'border-blue-500 bg-blue-50 shadow-sm'
-          : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
-      }`
-    : 'rounded-lg border border-gray-200 bg-gray-50 opacity-60';
 
   return (
-    <div className={containerClass}>
+    <div className={`agent-item-container ${isOnline ? 'online' : 'offline'} ${isSelected ? 'selected' : ''}`}>
       <div
-        className="flex items-center justify-between p-3 cursor-pointer"
+        className="agent-item-header"
         onClick={onToggle}
       >
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          <StatusIcon className={`w-4 h-4 ${statusColor} flex-shrink-0`} />
+          <StatusIcon className={`status-icon ${isOnline ? 'online' : 'offline'}`} />
           <div className="min-w-0 flex-1">
             <h3 className={`text-sm font-medium truncate ${
               isOnline ? 'text-gray-900' : 'text-gray-600'
@@ -63,7 +55,7 @@ const AgentItem: React.FC<AgentItemProps> = ({
               {agent.name}
             </h3>
             {agent.details && (
-              <p className="text-xs text-gray-500">
+              <p className="agent-details-text">
                 {agent.details.location} - {agent.details.datacenter}
               </p>
             )}

@@ -70,17 +70,17 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="app-container">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b border-gray-200 flex-shrink-0">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <img src={logo} alt="Logo" className="w-30 h-12 object-contain" />
+      <header className="app-header">
+        <div className="container max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
+          <div className="header-content">
+            <div className="header-left">
+              <div className="logo-container">
+                <img src={logo} alt="Logo" className="logo-image" />
               </div>
-              <div>
-                <h1 className="text-l font-bold text-black-500">Looking Glass</h1>
+              <div className="app-title">
+                <h1 className="title-large">Looking Glass</h1>
               </div>
             </div>
             
@@ -95,9 +95,9 @@ function App() {
       </header>
 
       {/* Main Content - flex-grow to fill available space */}
-      <main className="flex-1 flex flex-col">
-        <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 lg:py-6 w-full flex-1">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-6 h-full">
+      <main className="main-content">
+        <div className="container max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 lg:py-6 w-full flex-1">
+          <div className="grid-container grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-6 h-full">
             {/* Left Column - Agent Selection */}
             <div className="lg:col-span-1">
               <AgentSelector
@@ -132,16 +132,16 @@ function App() {
       </main>
 
       {/* Footer - auto sticks to bottom */}
-      <footer className="bg-white border-t border-gray-200 flex-shrink-0">
-        <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-3 sm:py-4 w-full">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-            <div className="text-sm text-gray-600">
-              <a href="https://github.com/TogawaSakiko363/YALS" target="_blank" rel="noopener noreferrer" className="text-xs sm:text-sm text-blue-600 hover:text-blue-800 hover:underline">Powered by YALS</a>
-              <p className="text-xs text-gray-500 mt-0.5">
-                Version {appConfig?.version || '1.0.0-basic'}
+      <footer className="app-footer">
+        <div className="container max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-3 sm:py-4 w-full">
+          <div className="footer-content">
+            <div className="footer-left">
+              <a href="https://github.com/TogawaSakiko363/YALS" target="_blank" rel="noopener noreferrer" className="github-link">Powered by YALS</a>
+              <p className="version-info">
+                Version {appConfig?.version || 'unknown'}
               </p>
             </div>
-            <div className="text-xs sm:text-sm text-gray-500">
+            <div className="footer-right">
               <p>© 2025 Sharon Networks, LLC.</p>
             </div>
           </div>

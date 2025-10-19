@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { History, Clock, Server, Target, CheckCircle, XCircle, Trash2, ChevronDown, ChevronRight, Copy } from 'lucide-react';
 import { CommandHistory as CommandHistoryType } from '../types/yals';
-import { Terminal as XTermComponent } from './Terminal';
 
 interface CommandHistoryProps {
   history: CommandHistoryType[];
@@ -38,43 +37,43 @@ export const CommandHistory: React.FC<CommandHistoryProps> = ({
     return new Date(timestamp).toLocaleString('zh-CN');
   };
 
-  const getCommandColor = (command: string) => {
+  const getCommandClassName = (command: string) => {
     switch (command) {
-      case 'ping': return 'bg-green-100 text-green-800';
-      case 'mtr': return 'bg-blue-100 text-blue-800';
-      case 'nexttrace': return 'bg-purple-100 text-purple-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'ping': return 'command-type-ping';
+      case 'mtr': return 'command-type-mtr';
+      case 'nexttrace': return 'command-type-nexttrace';
+      default: return 'command-type-default';
     }
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 flex flex-col flex-1">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <History className="w-4 h-4 text-gray-600" />
-          <h2 className="text-base font-semibold text-gray-900">执行历史</h2>
-          <span className="text-xs text-gray-500">({history.length})</span>
+    <div className="command-history-container">
+      <div className="command-history-header">
+        <div className="command-history-title">
+          <History className="icon-small text-gray-600" />
+          <h2 className="title-base">执行历史</h2>
+          <span className="history-count">({history.length})</span>
         </div>
         
         {history.length > 0 && (
           <button
             onClick={onClearHistory}
-            className="flex items-center gap-1 px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded-md transition-colors"
+            className="clear-history-btn"
           >
-            <Trash2 className="w-3 h-3" />
+            <Trash2 className="icon-xs" />
             清空
           </button>
         )}
       </div>
 
       {history.length === 0 ? (
-        <div className="text-center py-8 text-gray-500 flex-1 flex flex-col items-center justify-center">
-          <History className="w-8 h-8 mb-2 text-gray-300" />
-          <p className="text-sm">暂无历史</p>
-          <p className="text-xs mt-0.5">执行诊断后显示结果</p>
+        <div className="empty-history-state">
+          <History className="empty-history-icon" />
+          <p className="empty-history-text">暂无历史</p>
+          <p className="empty-history-subtext">执行诊断后显示结果</p>
         </div>
       ) : (
-        <div className="space-y-2 flex-1">
+        <div className="history-list">
           {history.map((item) => {
             const isActive = activeCommands.has(item.id);
             const isExpanded = expandedItems.has(item.id);
@@ -84,96 +83,92 @@ export const CommandHistory: React.FC<CommandHistoryProps> = ({
             return (
               <div
                 key={item.id}
-                className={`border rounded-lg transition-all duration-200 ${
-                  isActive ? 'border-blue-300 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
-                }`}
+                className={`history-item ${isActive ? 'active' : ''}`}
               >
                 <div
-                  className="p-3 cursor-pointer"
+                  className="history-item-header"
                   onClick={() => toggleExpanded(item.id)}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-1">
-                        {isExpanded ? (
-                          <ChevronDown className="w-3 h-3 text-gray-400" />
+                  <div className="history-item-info">
+                    <div className="history-item-status">
+                      {isExpanded ? (
+                        <ChevronDown className="icon-xs text-gray-400" />
+                      ) : (
+                        <ChevronRight className="icon-xs text-gray-400" />
+                      )}
+                      
+                      {isActive ? (
+                        <div className="status-indicator active"></div>
+                      ) : hasResponse ? (
+                        isSuccess ? (
+                          <CheckCircle className="icon-xs text-green-500" />
                         ) : (
-                          <ChevronRight className="w-3 h-3 text-gray-400" />
-                        )}
-                        
-                        {isActive ? (
-                          <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                        ) : hasResponse ? (
-                          isSuccess ? (
-                            <CheckCircle className="w-3 h-3 text-green-500" />
-                          ) : (
-                            <XCircle className="w-3 h-3 text-red-500" />
-                          )
-                        ) : (
-                          <div className="w-2 h-2 bg-gray-300 rounded-full"></div>
-                        )}
-                      </div>
+                          <XCircle className="icon-xs text-red-500" />
+                        )
+                      ) : (
+                        <div className="status-indicator"></div>
+                      )}
+                    </div>
 
-                      <span className={`px-1.5 py-0.5 text-xs font-medium rounded ${getCommandColor(item.command)}`}>
-                        {item.command.toUpperCase()}
+                    <span className={`command-type-badge ${getCommandClassName(item.command)}`}>
+                      {item.command.toUpperCase()}
+                    </span>
+
+                    <div className="history-item-meta">
+                      <div className="meta-item">
+                        <Target className="icon-xs" />
+                        <span className="font-mono">{item.target}</span>
+                      </div>
+                      <div className="meta-item">
+                        <Server className="icon-xs" />
+                        <span>{item.agent}</span>
+                      </div>
+                      <div className="meta-item">
+                        <Clock className="icon-xs" />
+                        <span>{formatTimestamp(item.timestamp)}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="history-item-status-text">
+                    {isActive && (
+                      <span className="status-text running">执行中</span>
+                    )}
+                    {hasResponse && !isActive && (
+                      <span className={`status-text ${isSuccess ? 'success' : 'error'}`}>
+                        {isSuccess ? '完成' : '失败'}
                       </span>
-
-                      <div className="flex items-center gap-3 text-xs text-gray-600">
-                        <div className="flex items-center gap-1">
-                          <Target className="w-2.5 h-2.5" />
-                          <span className="font-mono">{item.target}</span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Server className="w-2.5 h-2.5" />
-                          <span>{item.agent}</span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Clock className="w-2.5 h-2.5" />
-                          <span>{formatTimestamp(item.timestamp)}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      {isActive && (
-                        <span className="text-xs text-blue-600">执行中</span>
-                      )}
-                      {hasResponse && !isActive && (
-                        <span className={`text-xs ${
-                          isSuccess ? 'text-green-600' : 'text-red-600'
-                        }`}>
-                          {isSuccess ? '成功' : '失败'}
-                        </span>
-                      )}
-                    </div>
+                    )}
                   </div>
                 </div>
 
                 {isExpanded && hasResponse && (
-                  <div className="border-t border-gray-200 p-3 bg-gray-50">
+                  <div className="history-item-content">
                     {item.response?.success ? (
                         <div>
-                          <div className="flex items-center justify-between mb-1">
-                            <h4 className="text-xs font-medium text-gray-900">结果</h4>
+                          <div className="result-header">
+                            <h4 className="result-title">结果</h4>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 copyToClipboard(item.response?.output || '');
                               }}
-                              className="flex items-center gap-0.5 px-1.5 py-0.5 text-xs text-gray-600 hover:bg-gray-200 rounded transition-colors"
+                              className="copy-result-btn"
                             >
-                              <Copy className="w-2.5 h-2.5" />
+                              <Copy className="icon-xs" />
                               复制
                             </button>
                           </div>
-                          <div className="min-h-[100px]">
-                            <XTermComponent output={item.response.output} />
+                          <div className="result-output-container">
+                            <div className="result-output">
+                              {item.response.output || '无输出内容'}
+                            </div>
                           </div>
                         </div>
                     ) : (
                       <div>
-                        <h4 className="text-xs font-medium text-red-900 mb-1">失败</h4>
-                        <div className="text-xs text-red-700 bg-red-50 p-2 rounded border border-red-200">
+                        <h4 className="error-title">失败</h4>
+                        <div className="error-message">
                           {item.response?.error || '未知错误'}
                         </div>
                       </div>

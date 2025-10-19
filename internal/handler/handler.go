@@ -265,6 +265,9 @@ func (h *Handler) handleCommand(conn *websocket.Conn, req CommandRequest) {
 	commandID := fmt.Sprintf("%s-%s-%s", req.Command, req.Target, req.Agent)
 	stopChan := make(chan bool, 1)
 	
+	// 记录执行命令的日志
+	log.Printf("Sent run signal for command: %s", commandID)
+	
 	h.commandsLock.Lock()
 	h.activeCommands[commandID] = stopChan
 	h.commandsLock.Unlock()

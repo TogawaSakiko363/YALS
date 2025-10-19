@@ -106,7 +106,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
           
           setAgents(allAgents);
           
-          // 如果没有选择代理且有可用代理，选择第一个在线的代理
+          // 如果没有选择节点且有可用节点，选择第一个在线的节点
           if (!selectedAgent && allAgents.length > 0) {
             const onlineAgent = allAgents.find((agent: Agent) => agent.status === 1);
             if (onlineAgent) {
@@ -294,7 +294,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     }
     
     if (!selectedAgent) {
-      throw new Error('未选择代理');
+      throw new Error('未选择节点');
     }
     
     if (!target || target.trim() === '') {
