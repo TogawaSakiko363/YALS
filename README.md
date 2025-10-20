@@ -2,25 +2,6 @@
 
 YALS是一个中心化设计的通过SSH连接控制多台agent的Looking Glass服务程序。它允许用户通过Web界面在不同的agent上执行网络诊断命令，如ping、mtr和nexttrace。
 
-### 🚀 Sponsored by SharonNetworks
-
-<a href="https://sharon.io/">
-  <img src="https://framerusercontent.com/assets/3bMljdaUFNDFvMzdG9S0NjYmhSY.png" width="30%" alt="sharon.io">
-</a>
-
-本项目的构建与发布环境由 SharonNetworks 提供支持 —— 专注亚太顶级回国优化线路，高带宽、低延迟直连中国大陆，内置强大高防 DDoS 清洗能力。
-
-SharonNetworks 为您的业务起飞保驾护航！
-
-#### ✨ 服务优势
-
-* 亚太三网回程优化直连中国大陆，下载快到飞起
-* 超大带宽 + 抗攻击清洗服务，保障业务安全稳定
-* 多节点覆盖（香港、新加坡、日本、台湾、韩国）
-* 高防护力、高速网络；港/日/新 CDN 即将上线
-
-想体验同款构建环境？欢迎 [访问 Sharon 官网](https://sharon.io) 或 [加入 Telegram 群组](https://t.me/SharonNetwork) 了解更多并申请赞助。
-
 ## 项目功能特点
 
 - 通过SSH连接管理多台agent
@@ -122,6 +103,33 @@ sudo ./setup_agent.sh
 ```bash
 cd frontend
 npm install
+```
+
+### 自定义网页标题和Logo
+
+自从2.2.3版本起，可在前端目录下的 `src/custom.tsx` 实现有限的个性化Looking Glass
+
+```
+// 网页自定义配置文件
+export const config = {
+  // 网页标题
+  pageTitle: 'Example Networks, LLC. - Looking Glass',
+  
+  // 右侧页脚文字内容
+  footerRightText: '© 2025 Example Networks, LLC.',
+  
+  // 网页icon图标路径
+  faviconPath: '/images/favicon.ico',
+  
+  // 网页左上角logo图标路径
+  logoPath: '/images/Example.svg',
+  
+  // 网页背景颜色
+  backgroundColor: '#f5f4f1'
+};
+
+// 导出类型定义，方便TypeScript类型检查
+export type ConfigType = typeof config;
 ```
 
 ### 构建前端
