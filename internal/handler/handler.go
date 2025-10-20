@@ -240,7 +240,8 @@ func (h *Handler) handleCommand(conn *websocket.Conn, req CommandRequest) {
 
 	for _, a := range agents {
 		if a["name"] == req.Agent {
-			if a["status"].(agent.Status) != agent.StatusConnected {
+			// 检查代理状态：前端格式中1表示在线，0表示离线
+		if status, ok := a["status"].(int); !ok || status != 1 {
 				resp.Error = "Agent is not connected"
 				h.sendResponse(conn, resp)
 				return

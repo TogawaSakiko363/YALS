@@ -21,6 +21,8 @@ type Status int
 const (
 	// StatusDisconnected indicates the agent is disconnected
 	StatusDisconnected Status = iota
+	// StatusConnecting indicates the agent is currently connecting
+	StatusConnecting
 	// StatusConnected indicates the agent is connected
 	StatusConnected
 )
@@ -60,8 +62,12 @@ func NewManager(cfg *config.Config) *Manager {
 		manager.agents[agentCfg.Name] = agent
 	}
 
-	// Start offline agent checker
-	go manager.startOfflineAgentChecker()
+	// 延迟启动离线检查器，让Connect()先执行，避免双重连接
+	go func() {
+		// 等待5秒让初始连接完成
+		time.Sleep(5 * time.Second)
+		manager.startOfflineAgentChecker()
+	}()
 
 	return manager
 }
@@ -111,6 +117,7 @@ func (m *Manager) checkOfflineAgents() {
 	m.agentsLock.RLock()
 	offlineAgents := make([]*Agent, 0)
 	for _, agent := range m.agents {
+		// 只检查真正离线的代理，不包括正在连接中的
 		if agent.Status() == StatusDisconnected {
 			offlineAgents = append(offlineAgents, agent)
 		}
@@ -133,6 +140,21 @@ func (m *Manager) checkOfflineAgents() {
 
 // connectAgent establishes an SSH connection to a single agent
 func (m *Manager) connectAgent(agent *Agent) {
+	// 检查是否已经在连接中或已连接，避免重复连接
+	agent.statusLock.Lock()
+	if agent.status == StatusConnecting || agent.status == StatusConnected {
+		agent.statusLock.Unlock()
+		if agent.status == StatusConnecting {
+			log.Printf("Agent %s is already being connected, skipping duplicate connection attempt", agent.Config.Name)
+		} else {
+			log.Printf("Agent %s is already connected, skipping duplicate connection attempt", agent.Config.Name)
+		}
+		return
+	}
+	// 设置为连接中状态
+	agent.status = StatusConnecting
+	agent.statusLock.Unlock()
+
 	log.Printf("Connecting to agent %s (%s:%d)...", agent.Config.Name, agent.Config.Host, agent.Config.Port)
 	var authMethods []ssh.AuthMethod
 
@@ -815,9 +837,15 @@ func (m *Manager) GetAgents() []map[string]interface{} {
 
 	result := make([]map[string]interface{}, 0, len(m.agents))
 	for name, agent := range m.agents {
+		// 将后端状态映射为前端期望的格式：1表示在线，其他表示离线
+		frontendStatus := 0 // 默认离线
+		if agent.Status() == StatusConnected {
+			frontendStatus = 1 // 在线
+		}
+		
 		result = append(result, map[string]interface{}{
 			"name":     name,
-			"status":   agent.Status(),
+			"status":   frontendStatus,
 			"host":     agent.Config.Host,
 			"commands": agent.Config.Commands,
 			"details": map[string]interface{}{
@@ -865,9 +893,15 @@ func (m *Manager) GetAgentGroups() []map[string]interface{} {
 	for _, group := range m.config.Groups {
 		for _, agentName := range group.Agents {
 			if agent, exists := m.agents[agentName]; exists {
+				// 将后端状态映射为前端期望的格式：1表示在线，其他表示离线
+				frontendStatus := 0 // 默认离线
+				if agent.Status() == StatusConnected {
+					frontendStatus = 1 // 在线
+				}
+				
 				agentInfo := map[string]interface{}{
 					"name":     agentName,
-					"status":   agent.Status(),
+					"status":   frontendStatus,
 					"host":     agent.Config.Host,
 					"commands": agent.Config.Commands,
 					"details": map[string]interface{}{
@@ -886,9 +920,15 @@ func (m *Manager) GetAgentGroups() []map[string]interface{} {
 	for name, agent := range m.agents {
 		groupName := m.getAgentGroup(name)
 		if groupName == "" {
+			// 将后端状态映射为前端期望的格式：1表示在线，其他表示离线
+			frontendStatus := 0 // 默认离线
+			if agent.Status() == StatusConnected {
+				frontendStatus = 1 // 在线
+			}
+			
 			agentInfo := map[string]interface{}{
 				"name":     name,
-				"status":   agent.Status(),
+				"status":   frontendStatus,
 				"host":     agent.Config.Host,
 				"commands": agent.Config.Commands,
 				"details": map[string]interface{}{
