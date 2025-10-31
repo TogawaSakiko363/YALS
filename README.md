@@ -165,21 +165,6 @@ agents:
 - `agents`: Agent列表及其连接信息（包括主机地址、密码、支持命令等）
 - `connection`: 连接超时和重试设置
 
-Agent配置示例：
-```yaml
-agents:
-  - name: "Server Name"
-    host: "agent-ip:9527"          # Agent地址和端口
-    password: "agent_password"     # Agent连接密码
-    commands: ["ping", "mtr", "nexttrace"]  # 支持的命令
-    details:
-      location: "Tokyo, JP"        # 服务器位置
-      datacenter: "Your DC"        # 数据中心名称
-      test_ip: "agent-ip"          # 测试IP地址
-      description: "Description"   # 服务器描述
-```
-
-
 ## 前端构建说明
 
 ### 安装依赖
