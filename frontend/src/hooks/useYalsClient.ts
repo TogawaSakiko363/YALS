@@ -111,6 +111,8 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
             const onlineAgent = allAgents.find((agent: Agent) => agent.status === 1);
             if (onlineAgent) {
               setSelectedAgent(onlineAgent.name);
+              // 获取该agent的commands
+              getAgentCommands(onlineAgent.name);
             }
           }
         } else if (message.type === 'app_config') {
@@ -236,12 +238,11 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
             reconnectTimeoutRef.current = null;
           }
           
-          // 获取应用配置和命令列表
+          // 获取应用配置
           const configRequest = JSON.stringify({ type: 'get_config' });
           socket.send(configRequest);
           
-          const commandsRequest = JSON.stringify({ type: 'get_commands' });
-          socket.send(commandsRequest);
+          // 不再自动获取全局commands，而是在选择agent时获取该agent的commands
           
           resolve();
         };
@@ -470,6 +471,19 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     });
   }, []);
 
+  const getAgentCommands = useCallback((agentName: string) => {
+    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const request = {
+      type: 'get_agent_commands',
+      agent: agentName
+    };
+
+    socketRef.current.send(JSON.stringify(request));
+  }, []);
+
   const stopCommand = useCallback((commandId: string) => {
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
       return;
@@ -499,13 +513,23 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     };
   }, [disconnect]);
 
+  const handleSetSelectedAgent = useCallback((agentName: string | null) => {
+    setSelectedAgent(agentName);
+    if (agentName) {
+      getAgentCommands(agentName);
+    } else {
+      // 如果没有选择agent，清空commands
+      setCommands({});
+    }
+  }, [getAgentCommands]);
+
   return {
     isConnected,
     isConnecting,
     groups,
     agents,
     selectedAgent,
-    setSelectedAgent,
+    setSelectedAgent: handleSetSelectedAgent,
     appConfig,
     commands,
     commandHistory,

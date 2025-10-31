@@ -2,11 +2,11 @@
 
 # Application settings
 app:
-  version: "2.2.2"
+  version: "3.0.0-rc1"
 
 # Server settings
 server:
-  host: "0.0.0.0"
+  host: "localhost"
   port: 8080
   log_level: "info"  # debug, info, warn, error
 
@@ -24,62 +24,51 @@ commands:
     template: "mtr -r -c 4"
     description: "网络路由和丢包分析"
   nexttrace:
-    template: "nexttrace --nocolor --map --ipv4"
+    template: "nexttrace --map --ipv4 --nocolor"
     description: "可视化路由跟踪"
+  gb6:
+    template: "bash /opt/geekbench6/gb6.sh"
+    description: "Geekbench6 单核性能测试"
   # 示例：添加新命令
-  # traceroute:
-  #   template: "traceroute -n"
-  #   description: "路由跟踪"
   # dig:
   #   template: "dig +short"
   #   description: "DNS查询"
 
 # Agent settings
 agents:
-  - name: "Agent 01"
-    host: "11.4.51.4"
-    port: 22
-    username: "yals"
-    password: "thisisastrongpassword"  # Leave empty if using key authentication
-    key_file: ""  # Path to private key file
+  - name: "localhost"
+    host: "23.137.164.138:9527"
+    password: "abc123"
     commands:
       - ping
       - mtr
       - nexttrace
     details:
-      location: "幻想乡"
-      datacenter: "沼泽动力1号机房"
-      test_ip: "11.4.51.4"
-      description: "地月114514Tbps IPLC独享专线"
+      location: "local"
+      datacenter: "homelab"
+      test_ip: "127.0.0.1"
+      description: "114514Gbps"
 
-  - name: "Agent 02"
-    host: "114.5.1.4"
-    port: 22
-    username: "yals"
-    password: "thisisastrongpassword"  # Leave empty if using key authentication
-    key_file: ""  # Path to private key file
-    commands:
-      - ping
-      - mtr
-      - nexttrace
-    details:
-      location: "幻想乡"
-      datacenter: "沼泽动力1号机房"
-      test_ip: "114.5.1.4"
-      description: "地月114514Tbps IPLC独享专线"
 
 group:
-  - name: "local"
+  - name: "Hong Kong"
     agents:
-      - "Agent 01"
-  - name: "remote"
+      - "HKG Peak"
+      - "HKG Pulse"
+      - "HKG Turin"
+  - name: "Japan"
     agents:
-      - "Agent 02"
+      - "JPN Pulse"
 
 # Connection settings
 connection:
   timeout: 10        # seconds
   keepalive: 60      # seconds
-  retry_interval: 10 # seconds
+  retry_interval: 30 # seconds
   max_retries: 0     # 0 = infinite retries, >0 = limited retries
-  offline_after_retries: 3 # define as offline after retries for 3 time
+  offline_after_retries: 3 # After 3 failed reconnections, it is considered offline
+
+# Geekbench6 settings
+gb6:
+  queue_timeout: 300  # seconds, maximum time for a GB6 test
+  concurrent_limit: 2  # maximum concurrent GB6 tests per agent

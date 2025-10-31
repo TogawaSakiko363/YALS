@@ -15,7 +15,7 @@ type AppConfig struct {
 // Config represents the server configuration
 type Config struct {
 	App AppConfig `yaml:"app"`
-	
+
 	Server struct {
 		Host     string `yaml:"host"`
 		Port     int    `yaml:"port"`
@@ -30,15 +30,15 @@ type Config struct {
 	Agents []Agent `yaml:"agents"`
 
 	Connection struct {
-		Timeout           int `yaml:"timeout"`
-		Keepalive         int `yaml:"keepalive"`
-		RetryInterval     int `yaml:"retry_interval"`
-		MaxRetries        int `yaml:"max_retries"`
+		Timeout             int `yaml:"timeout"`
+		Keepalive           int `yaml:"keepalive"`
+		RetryInterval       int `yaml:"retry_interval"`
+		MaxRetries          int `yaml:"max_retries"`
 		OfflineAfterRetries int `yaml:"offline_after_retries"`
 	} `yaml:"connection"`
 
 	Commands map[string]CommandConfig `yaml:"commands"`
-	Groups   []Group   `yaml:"group"`
+	Groups   []Group                  `yaml:"group"`
 }
 
 // CommandConfig represents a command configuration
@@ -49,21 +49,18 @@ type CommandConfig struct {
 
 // AgentDetails represents additional agent information
 type AgentDetails struct {
-	Location   string `yaml:"location"`
-	Datacenter string `yaml:"datacenter"`
-	TestIP     string `yaml:"test_ip"`
+	Location    string `yaml:"location"`
+	Datacenter  string `yaml:"datacenter"`
+	TestIP      string `yaml:"test_ip"`
 	Description string `yaml:"description"`
 }
 
-// Agent represents an SSH agent configuration
+// Agent represents an agent configuration
 type Agent struct {
-	Name     string      `yaml:"name"`
-	Host     string      `yaml:"host"`
-	Port     int         `yaml:"port"`
-	Username string      `yaml:"username"`
-	Password string      `yaml:"password"`
-	KeyFile  string      `yaml:"key_file"`
-	Commands []string    `yaml:"commands"`
+	Name     string       `yaml:"name"`
+	Host     string       `yaml:"host"`
+	Password string       `yaml:"password"`
+	Commands []string     `yaml:"commands"`
 	Details  AgentDetails `yaml:"details"`
 }
 

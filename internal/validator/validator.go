@@ -5,7 +5,7 @@ import (
 	"net"
 	"regexp"
 	"strings"
-	
+
 	"YALS_SSH/internal/config"
 )
 
@@ -87,7 +87,7 @@ func SanitizeCommand(command, target string, allowedCommands []string) (string, 
 // BuildCommand constructs a command using configuration templates
 func BuildCommand(command, target string) string {
 	cfg := config.GetConfig()
-	
+
 	// Get command template from config
 	cmdTemplate := ""
 	if cfg.Commands != nil {
@@ -109,10 +109,10 @@ func BuildCommand(command, target string) string {
 func GetAvailableCommands() []CommandDetail {
 	cfg := config.GetConfig()
 	var commands []CommandDetail
-	
+
 	// Define the exact order of commands based on config file
 	orderedCommands := []string{"ping", "mtr", "nexttrace"}
-	
+
 	// Add commands from config in the exact defined order
 	if cfg.Commands != nil {
 		for _, cmdName := range orderedCommands {
@@ -127,7 +127,7 @@ func GetAvailableCommands() []CommandDetail {
 				})
 			}
 		}
-		
+
 		// Add any additional commands that might be in config but not in orderedCommands
 		for cmdName, cmdConfig := range cfg.Commands {
 			found := false
@@ -149,7 +149,7 @@ func GetAvailableCommands() []CommandDetail {
 			}
 		}
 	}
-	
+
 	// Add default commands that might not be in config
 	for _, cmdName := range orderedCommands {
 		found := false
@@ -166,6 +166,70 @@ func GetAvailableCommands() []CommandDetail {
 			})
 		}
 	}
-	
+
+	return commands
+}
+
+// GetAgentCommands returns commands available for a specific agent
+// Returns a slice of command details based on the agent's supported commands
+func GetAgentCommands(agentCommands []string) []CommandDetail {
+	cfg := config.GetConfig()
+	var commands []CommandDetail
+
+	// Define the exact order of commands based on config file
+	orderedCommands := []string{"ping", "mtr", "nexttrace"}
+
+	// Add commands from agent's supported commands in the exact defined order
+	for _, cmdName := range orderedCommands {
+		// Check if this command is supported by the agent
+		supported := false
+		for _, agentCmd := range agentCommands {
+			if agentCmd == cmdName {
+				supported = true
+				break
+			}
+		}
+
+		if supported {
+			description := fmt.Sprintf("Execute %s command", cmdName)
+			if cfg.Commands != nil {
+				if cmdConfig, exists := cfg.Commands[cmdName]; exists {
+					if cmdConfig.Description != "" {
+						description = cmdConfig.Description
+					}
+				}
+			}
+			commands = append(commands, CommandDetail{
+				Name:        cmdName,
+				Description: description,
+			})
+		}
+	}
+
+	// Add any additional commands that might be supported by agent but not in orderedCommands
+	for _, cmdName := range agentCommands {
+		found := false
+		for _, cmd := range commands {
+			if cmd.Name == cmdName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			description := fmt.Sprintf("Execute %s command", cmdName)
+			if cfg.Commands != nil {
+				if cmdConfig, exists := cfg.Commands[cmdName]; exists {
+					if cmdConfig.Description != "" {
+						description = cmdConfig.Description
+					}
+				}
+			}
+			commands = append(commands, CommandDetail{
+				Name:        cmdName,
+				Description: description,
+			})
+		}
+	}
+
 	return commands
 }

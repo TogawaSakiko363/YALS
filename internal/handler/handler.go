@@ -49,14 +49,14 @@ type CommandResponse struct {
 
 // StreamingCommandResponse represents a streaming command response
 type StreamingCommandResponse struct {
-	Type      string `json:"type"`
-	Success   bool   `json:"success"`
-	Agent     string `json:"agent"`
-	Command   string `json:"command"`
-	Target    string `json:"target"`
-	Output    string `json:"output"`
-	Error     string `json:"error,omitempty"`
-	IsComplete bool  `json:"is_complete"`
+	Type       string `json:"type"`
+	Success    bool   `json:"success"`
+	Agent      string `json:"agent"`
+	Command    string `json:"command"`
+	Target     string `json:"target"`
+	Output     string `json:"output"`
+	Error      string `json:"error,omitempty"`
+	IsComplete bool   `json:"is_complete"`
 }
 
 // AgentStatusUpdate represents an agent status update
@@ -81,7 +81,7 @@ type AppConfigResponse struct {
 // NewHandler creates a new handler
 func NewHandler(agentManager *agent.Manager, pingInterval, pongWait time.Duration) *Handler {
 	return &Handler{
-		agentManager:   agentManager,
+		agentManager: agentManager,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -205,6 +205,8 @@ func (h *Handler) readPump(conn *websocket.Conn) {
 		switch req.Type {
 		case "get_commands":
 			h.handleGetCommands(conn)
+		case "get_agent_commands":
+			h.handleGetAgentCommands(conn, req)
 		case "get_config":
 			h.handleGetConfig(conn)
 		case "execute_command":
@@ -241,7 +243,7 @@ func (h *Handler) handleCommand(conn *websocket.Conn, req CommandRequest) {
 	for _, a := range agents {
 		if a["name"] == req.Agent {
 			// 检查代理状态：前端格式中1表示在线，0表示离线
-		if status, ok := a["status"].(int); !ok || status != 1 {
+			if status, ok := a["status"].(int); !ok || status != 1 {
 				resp.Error = "Agent is not connected"
 				h.sendResponse(conn, resp)
 				return
@@ -265,10 +267,10 @@ func (h *Handler) handleCommand(conn *websocket.Conn, req CommandRequest) {
 	// 创建停止通道
 	commandID := fmt.Sprintf("%s-%s-%s", req.Command, req.Target, req.Agent)
 	stopChan := make(chan bool, 1)
-	
+
 	// 记录执行命令的日志
 	log.Printf("Sent run signal for command: %s", commandID)
-	
+
 	h.commandsLock.Lock()
 	h.activeCommands[commandID] = stopChan
 	h.commandsLock.Unlock()
@@ -331,6 +333,47 @@ func (h *Handler) handleGetCommands(conn *websocket.Conn) {
 	data, err := json.Marshal(response)
 	if err != nil {
 		log.Printf("Failed to marshal commands response: %v", err)
+		return
+	}
+
+	h.clientsLock.RLock()
+	defer h.clientsLock.RUnlock()
+
+	if _, ok := h.clients[conn]; ok {
+		conn.WriteMessage(websocket.TextMessage, data)
+	}
+}
+
+// handleGetAgentCommands handles the get agent commands request
+func (h *Handler) handleGetAgentCommands(conn *websocket.Conn, req CommandRequest) {
+	if req.Agent == "" {
+		log.Printf("Agent name is required for get_agent_commands request")
+		return
+	}
+
+	// Get agent's supported commands
+	agents := h.agentManager.GetAgents()
+	var agentCommands []string
+
+	for _, a := range agents {
+		if a["name"] == req.Agent {
+			if cmds, ok := a["commands"].([]string); ok {
+				agentCommands = cmds
+			}
+			break
+		}
+	}
+
+	// Convert agent commands to CommandDetail format
+	commands := validator.GetAgentCommands(agentCommands)
+	response := CommandsListResponse{
+		Type:     "commands_list",
+		Commands: commands,
+	}
+
+	data, err := json.Marshal(response)
+	if err != nil {
+		log.Printf("Failed to marshal agent commands response: %v", err)
 		return
 	}
 
