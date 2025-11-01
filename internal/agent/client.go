@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"YALS/internal/config"
 	"bufio"
 	"fmt"
 	"log"
@@ -8,23 +9,24 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 // Client represents an agent client that connects to the server
 type Client struct {
-	password       string
-	upgrader       websocket.Upgrader
+	config         *config.AgentConfig
 	activeCommands map[string]*exec.Cmd
 	commandsLock   sync.RWMutex
 }
 
 // CommandRequest represents a command request from the server
 type CommandRequest struct {
-	Type      string `json:"type"`
-	Command   string `json:"command"`
-	CommandID string `json:"command_id"`
+	Type        string `json:"type"`
+	CommandName string `json:"command_name"` // 改为命令名称而不是完整命令
+	Target      string `json:"target"`       // 目标参数（如IP地址）
+	CommandID   string `json:"command_id"`
 }
 
 // CommandResponse represents a command response to the server
@@ -37,46 +39,87 @@ type CommandResponse struct {
 	IsError    bool   `json:"is_error"`
 }
 
-// NewClient creates a new agent client
+// NewClient creates a new agent client (deprecated, use NewClientWithConfig)
 func NewClient(password string) *Client {
+	// This is kept for backward compatibility but should not be used
+	agentConfig := &config.AgentConfig{}
+	agentConfig.Server.Password = password
 	return &Client{
-		password: password,
-		upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool {
-				return true // Allow all origins
-			},
-		},
+		config:         agentConfig,
 		activeCommands: make(map[string]*exec.Cmd),
 	}
 }
 
-// HandleWebSocket handles WebSocket connections from the server
-func (c *Client) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Check password
-	password := r.Header.Get("X-Agent-Password")
-	if password != c.password {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
+// NewClientWithConfig creates a new agent client with configuration
+func NewClientWithConfig(agentConfig *config.AgentConfig) *Client {
+	return &Client{
+		config:         agentConfig,
+		activeCommands: make(map[string]*exec.Cmd),
+	}
+}
+
+// ConnectToServer connects to the server and handles the WebSocket connection
+func (c *Client) ConnectToServer() error {
+	// 根据配置选择协议
+	protocol := "ws"
+	if c.config.Server.TLS {
+		protocol = "wss"
 	}
 
-	conn, err := c.upgrader.Upgrade(w, r, nil)
+	serverURL := fmt.Sprintf("%s://%s:%d/ws/api/agent", protocol, c.config.Server.Host, c.config.Server.Port)
+
+	// Set up headers for authentication
+	headers := http.Header{}
+	headers.Set("X-Agent-Password", c.config.Server.Password)
+
+	// Create dialer
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 10 * time.Second,
+	}
+
+	log.Printf("Connecting to server at %s", serverURL)
+
+	// Connect to server
+	conn, _, err := dialer.Dial(serverURL, headers)
 	if err != nil {
-		log.Printf("Failed to upgrade connection: %v", err)
-		return
+		return fmt.Errorf("failed to connect to server: %w", err)
 	}
 	defer conn.Close()
 
-	log.Printf("Server connected from %s", conn.RemoteAddr())
+	log.Printf("Connected to server successfully")
 
-	// Send authentication success
-	authResp := map[string]interface{}{
-		"type":    "auth_success",
-		"message": "Agent authenticated successfully",
+	// Set up ping/pong handling
+	conn.SetPongHandler(func(appData string) error {
+		log.Printf("Received pong from server")
+		return nil
+	})
+
+	// Send handshake with agent information
+	handshake := map[string]interface{}{
+		"type":     "handshake",
+		"name":     c.config.Agent.Name,
+		"group":    c.config.Agent.Group,
+		"details":  c.config.Agent.Details,
+		"commands": c.config.GetAvailableCommands(),
 	}
-	if err := conn.WriteJSON(authResp); err != nil {
-		log.Printf("Failed to send auth response: %v", err)
-		return
+
+	if err := conn.WriteJSON(handshake); err != nil {
+		return fmt.Errorf("failed to send handshake: %w", err)
 	}
+
+	log.Printf("Sent handshake with %d available commands", len(c.config.Commands))
+
+	// Wait for handshake acknowledgment
+	var ack map[string]interface{}
+	if err := conn.ReadJSON(&ack); err != nil {
+		return fmt.Errorf("failed to read handshake ack: %w", err)
+	}
+
+	if ackType, ok := ack["type"].(string); !ok || ackType != "handshake_ack" {
+		return fmt.Errorf("invalid handshake acknowledgment")
+	}
+
+	log.Printf("Handshake completed successfully")
 
 	// Handle incoming messages
 	for {
@@ -98,15 +141,36 @@ func (c *Client) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("Server disconnected from %s", conn.RemoteAddr())
+	log.Printf("Disconnected from server")
+	return nil
 }
 
 // executeCommand executes a command and streams the output
 func (c *Client) executeCommand(conn *websocket.Conn, req CommandRequest) {
-	log.Printf("Executing command: %s (ID: %s)", req.Command, req.CommandID)
+	// Security check: Verify command is allowed
+	if !c.config.IsCommandAllowed(req.CommandName) {
+		c.sendError(conn, req.CommandID, fmt.Sprintf("Command '%s' is not allowed", req.CommandName))
+		log.Printf("SECURITY: Blocked unauthorized command '%s' from server", req.CommandName)
+		return
+	}
+
+	// Get command template
+	template, exists := c.config.GetCommandTemplate(req.CommandName)
+	if !exists {
+		c.sendError(conn, req.CommandID, fmt.Sprintf("Command template not found: %s", req.CommandName))
+		return
+	}
+
+	// Build command with target parameter
+	fullCommand := template
+	if req.Target != "" {
+		fullCommand = template + " " + req.Target
+	}
+
+	log.Printf("Executing command: %s (ID: %s)", fullCommand, req.CommandID)
 
 	// Parse command
-	parts := strings.Fields(req.Command)
+	parts := strings.Fields(fullCommand)
 	if len(parts) == 0 {
 		c.sendError(conn, req.CommandID, "Empty command")
 		return
@@ -200,47 +264,33 @@ func (c *Client) stopCommand(commandID string) {
 	}
 }
 
-// sendOutput sends command output to the server
-func (c *Client) sendOutput(conn *websocket.Conn, commandID, output string, isError bool) {
+// sendCommandResponse sends a command response to the server
+func (c *Client) sendCommandResponse(conn *websocket.Conn, commandID, output, errorMsg string, isComplete, isError bool) {
 	resp := CommandResponse{
 		Type:       "command_output",
 		CommandID:  commandID,
 		Output:     output,
-		IsComplete: false,
+		Error:      errorMsg,
+		IsComplete: isComplete,
 		IsError:    isError,
 	}
 
 	if err := conn.WriteJSON(resp); err != nil {
-		log.Printf("Failed to send output: %v", err)
+		log.Printf("Failed to send command response: %v", err)
 	}
+}
+
+// sendOutput sends command output to the server
+func (c *Client) sendOutput(conn *websocket.Conn, commandID, output string, isError bool) {
+	c.sendCommandResponse(conn, commandID, output, "", false, isError)
 }
 
 // sendError sends an error message to the server
 func (c *Client) sendError(conn *websocket.Conn, commandID, errorMsg string) {
-	resp := CommandResponse{
-		Type:       "command_output",
-		CommandID:  commandID,
-		Error:      errorMsg,
-		IsComplete: true,
-		IsError:    true,
-	}
-
-	if err := conn.WriteJSON(resp); err != nil {
-		log.Printf("Failed to send error: %v", err)
-	}
+	c.sendCommandResponse(conn, commandID, "", errorMsg, true, true)
 }
 
 // sendCompletion sends a completion message to the server
 func (c *Client) sendCompletion(conn *websocket.Conn, commandID string) {
-	resp := CommandResponse{
-		Type:       "command_output",
-		CommandID:  commandID,
-		Output:     "",
-		IsComplete: true,
-		IsError:    false,
-	}
-
-	if err := conn.WriteJSON(resp); err != nil {
-		log.Printf("Failed to send completion: %v", err)
-	}
+	c.sendCommandResponse(conn, commandID, "", "", true, false)
 }

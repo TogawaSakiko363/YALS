@@ -3,11 +3,13 @@ package agent
 import (
 	"fmt"
 	"log"
-	"net/http"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
-	"YALS_SSH/internal/config"
+	"YALS/internal/config"
+	"YALS/internal/validator"
 
 	"github.com/gorilla/websocket"
 )
@@ -24,14 +26,19 @@ const (
 	StatusConnected
 )
 
-// Agent represents a WebSocket agent
+// Agent represents a connected agent
 type Agent struct {
-	Config     config.Agent
-	conn       *websocket.Conn
-	status     Status
-	lastCheck  time.Time
-	statusLock sync.RWMutex
-	dialer     *websocket.Dialer
+	Name              string
+	Group             string
+	Details           config.AgentDetails
+	conn              *websocket.Conn
+	status            Status
+	lastCheck         time.Time
+	lastConnected     time.Time // 最后连接时间
+	firstSeen         time.Time // 首次连接时间
+	statusLock        sync.RWMutex
+	availableCommands []config.CommandInfo
+	commandsLock      sync.RWMutex
 }
 
 // CommandOutput represents command output from an agent
@@ -43,187 +50,126 @@ type CommandOutput struct {
 
 // Manager manages multiple WebSocket agents
 type Manager struct {
-	agents               map[string]*Agent
-	config               *config.Config
-	agentsLock           sync.RWMutex
-	offlineCheckerTicker *time.Ticker
-	offlineCheckerDone   chan bool
-	outputHandlers       map[string]chan CommandOutput
-	outputHandlersLock   sync.RWMutex
+	agents             map[string]*Agent
+	agentsLock         sync.RWMutex
+	outputHandlers     map[string]chan CommandOutput
+	outputHandlersLock sync.RWMutex
 }
 
 // NewManager creates a new agent manager
-func NewManager(cfg *config.Config) *Manager {
-	manager := &Manager{
-		agents:             make(map[string]*Agent),
-		config:             cfg,
-		offlineCheckerDone: make(chan bool),
-		outputHandlers:     make(map[string]chan CommandOutput),
-	}
-
-	// Initialize agents from config
-	for _, agentCfg := range cfg.Agents {
-		agent := &Agent{
-			Config: agentCfg,
-			status: StatusDisconnected,
-			dialer: &websocket.Dialer{
-				HandshakeTimeout: 10 * time.Second,
-			},
-		}
-		manager.agents[agentCfg.Name] = agent
-	}
-
-	// 延迟启动离线检查器，让Connect()先执行，避免双重连接
-	go func() {
-		// 等待5秒让初始连接完成
-		time.Sleep(5 * time.Second)
-		manager.startOfflineAgentChecker()
-	}()
-
-	return manager
-}
-
-// Connect establishes WebSocket connections to all agents
-func (m *Manager) Connect() {
-	m.agentsLock.RLock()
-	defer m.agentsLock.RUnlock()
-
-	log.Println("Starting to connect to all agents...")
-	for _, agent := range m.agents {
-		log.Printf("Initiating connection to agent: %s (%s)", agent.Config.Name, agent.Config.Host)
-		go m.connectAgent(agent)
+func NewManager() *Manager {
+	return &Manager{
+		agents:         make(map[string]*Agent),
+		outputHandlers: make(map[string]chan CommandOutput),
 	}
 }
 
-// startOfflineAgentChecker starts a background task that periodically checks offline agents
-func (m *Manager) startOfflineAgentChecker() {
-	// Check every 60 seconds by default
-	checkInterval := 60
-	if m.config.Connection.RetryInterval > 0 {
-		// Use retry interval from configuration
-		checkInterval = m.config.Connection.RetryInterval
+// HandleAgentConnection handles a new agent connection
+func (m *Manager) HandleAgentConnection(conn *websocket.Conn) {
+	defer conn.Close()
+
+	// Wait for handshake message from agent
+	var handshake struct {
+		Type     string               `json:"type"`
+		Name     string               `json:"name"`
+		Group    string               `json:"group"`
+		Details  config.AgentDetails  `json:"details"`
+		Commands []config.CommandInfo `json:"commands"`
 	}
 
-	m.offlineCheckerTicker = time.NewTicker(time.Duration(checkInterval) * time.Second)
-	defer m.offlineCheckerTicker.Stop()
-
-	log.Printf("Starting offline agent checker with interval %d seconds", checkInterval)
-
-	// Check immediately on startup
-	m.checkOfflineAgents()
-
-	for {
-		select {
-		case <-m.offlineCheckerTicker.C:
-			m.checkOfflineAgents()
-		case <-m.offlineCheckerDone:
-			log.Println("Offline agent checker stopped")
-			return
-		}
-	}
-}
-
-// checkOfflineAgents checks all offline agents and tries to reconnect
-func (m *Manager) checkOfflineAgents() {
-	m.agentsLock.RLock()
-	offlineAgents := make([]*Agent, 0)
-	for _, agent := range m.agents {
-		// 只检查真正离线的代理，不包括正在连接中的
-		if agent.Status() == StatusDisconnected {
-			offlineAgents = append(offlineAgents, agent)
-		}
-	}
-	m.agentsLock.RUnlock()
-
-	if len(offlineAgents) > 0 {
-		log.Printf("Checking %d offline agents for reconnection", len(offlineAgents))
-		for _, agent := range offlineAgents {
-			go func(a *Agent) {
-				// Try to connect to offline agent
-				m.connectAgent(a)
-				if a.Status() == StatusConnected {
-					log.Printf("Successfully reconnected to offline agent: %s", a.Config.Name)
-				}
-			}(agent)
-		}
-	}
-}
-
-// connectAgent establishes a WebSocket connection to a single agent
-func (m *Manager) connectAgent(agent *Agent) {
-	// 检查是否已经在连接中或已连接，避免重复连接
-	agent.statusLock.Lock()
-	if agent.status == StatusConnecting || agent.status == StatusConnected {
-		agent.statusLock.Unlock()
-		if agent.status == StatusConnecting {
-			log.Printf("Agent %s is already being connected, skipping duplicate connection attempt", agent.Config.Name)
-		} else {
-			log.Printf("Agent %s is already connected, skipping duplicate connection attempt", agent.Config.Name)
-		}
-		return
-	}
-	// 设置为连接中状态
-	agent.status = StatusConnecting
-	agent.statusLock.Unlock()
-
-	log.Printf("Connecting to agent %s (%s)...", agent.Config.Name, agent.Config.Host)
-
-	// Prepare WebSocket URL
-	url := fmt.Sprintf("ws://%s/ws", agent.Config.Host)
-
-	// Set up headers with password authentication
-	headers := http.Header{}
-	headers.Set("X-Agent-Password", agent.Config.Password)
-
-	// Connect to the WebSocket server
-	log.Printf("Dialing WebSocket server at %s for agent %s", url, agent.Config.Name)
-	conn, _, err := agent.dialer.Dial(url, headers)
-	if err != nil {
-		log.Printf("Failed to connect to agent %s: %v", agent.Config.Name, err)
-		agent.setStatus(StatusDisconnected)
+	if err := conn.ReadJSON(&handshake); err != nil {
+		log.Printf("Failed to read agent handshake: %v", err)
 		return
 	}
 
-	agent.conn = conn
-	agent.setStatus(StatusConnected)
-	log.Printf("Successfully connected to agent %s (%s)", agent.Config.Name, agent.Config.Host)
+	if handshake.Type != "handshake" {
+		log.Printf("Invalid handshake type: %s", handshake.Type)
+		return
+	}
 
-	// Start message handling goroutine
-	go m.handleAgentMessages(agent)
+	// Create or update agent
+	m.agentsLock.Lock()
+	agent, exists := m.agents[handshake.Name]
+	if exists {
+		// Update existing agent
+		agent.Group = handshake.Group
+		agent.Details = handshake.Details
+		agent.conn = conn
+		agent.status = StatusConnected
+		agent.lastCheck = time.Now()
+		agent.lastConnected = time.Now()
+		agent.availableCommands = handshake.Commands
+	} else {
+		// Create new agent
+		now := time.Now()
+		agent = &Agent{
+			Name:              handshake.Name,
+			Group:             handshake.Group,
+			Details:           handshake.Details,
+			conn:              conn,
+			status:            StatusConnected,
+			lastCheck:         now,
+			lastConnected:     now,
+			firstSeen:         now,
+			availableCommands: handshake.Commands,
+		}
+		m.agents[handshake.Name] = agent
+	}
+	m.agentsLock.Unlock()
 
-	// Start keepalive goroutine
-	go m.keepAlive(agent)
+	log.Printf("Agent registered: %s (Group: %s)", handshake.Name, handshake.Group)
+
+	// Send acknowledgment
+	ack := map[string]interface{}{
+		"type":    "handshake_ack",
+		"message": "Agent registered successfully",
+	}
+	if err := conn.WriteJSON(ack); err != nil {
+		log.Printf("Failed to send handshake ack: %v", err)
+		return
+	}
+
+	// Handle agent messages
+	m.handleAgentMessages(agent)
 }
 
 // handleAgentMessages handles incoming messages from an agent
 func (m *Manager) handleAgentMessages(agent *Agent) {
 	defer func() {
-		if agent.conn != nil {
-			agent.conn.Close()
-		}
-		agent.setStatus(StatusDisconnected)
-		log.Printf("Agent %s message handler stopped", agent.Config.Name)
+		// Mark agent as disconnected but keep it in memory
+		agent.statusLock.Lock()
+		agent.status = StatusDisconnected
+		agent.conn = nil
+		agent.statusLock.Unlock()
+		log.Printf("Agent disconnected: %s (keeping in memory)", agent.Name)
+
+		// 触发一次清理检查（可选，在有配置的情况下）
+		// 这里不直接清理，而是让定期清理来处理，避免在断开时立即删除
 	}()
 
 	for {
-		var msg map[string]interface{}
-		if err := agent.conn.ReadJSON(&msg); err != nil {
+		var message map[string]interface{}
+		if err := agent.conn.ReadJSON(&message); err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("WebSocket error for agent %s: %v", agent.Config.Name, err)
+				log.Printf("Agent %s unexpected WebSocket close: %v", agent.Name, err)
+			} else if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				log.Printf("Agent %s closed connection normally", agent.Name)
+			} else {
+				log.Printf("Agent %s connection error: %v", agent.Name, err)
 			}
 			break
 		}
 
-		// Handle different message types
-		if msgType, ok := msg["type"].(string); ok {
-			switch msgType {
-			case "auth_success":
-				log.Printf("Agent %s authenticated successfully", agent.Config.Name)
-			case "command_output":
-				m.handleCommandOutput(msg)
-			default:
-				log.Printf("Unknown message type from agent %s: %s", agent.Config.Name, msgType)
-			}
+		msgType, ok := message["type"].(string)
+		if !ok {
+			continue
+		}
+
+		switch msgType {
+		case "command_output":
+			m.handleCommandOutput(message)
+		default:
+			log.Printf("Unknown message type from agent %s: %s", agent.Name, msgType)
 		}
 	}
 }
@@ -235,35 +181,32 @@ func (m *Manager) handleCommandOutput(msg map[string]interface{}) {
 		return
 	}
 
-	output := CommandOutput{}
+	output, _ := msg["output"].(string)
+	errorMsg, _ := msg["error"].(string)
+	isComplete, _ := msg["is_complete"].(bool)
+	isError, _ := msg["is_error"].(bool)
 
-	if outputStr, ok := msg["output"].(string); ok {
-		output.Output = outputStr
+	// If there's an error message, use it as output and mark as error
+	if errorMsg != "" {
+		output = errorMsg
+		isError = true
 	}
 
-	if errorStr, ok := msg["error"].(string); ok && errorStr != "" {
-		output.Output = errorStr
-		output.IsError = true
-	}
-
-	if isError, ok := msg["is_error"].(bool); ok {
-		output.IsError = isError
-	}
-
-	if isComplete, ok := msg["is_complete"].(bool); ok {
-		output.IsComplete = isComplete
-	}
-
-	// Send to registered handler
 	m.outputHandlersLock.RLock()
-	if handler, exists := m.outputHandlers[commandID]; exists {
+	handler, exists := m.outputHandlers[commandID]
+	m.outputHandlersLock.RUnlock()
+
+	if exists {
 		select {
-		case handler <- output:
+		case handler <- CommandOutput{
+			Output:     output,
+			IsError:    isError,
+			IsComplete: isComplete,
+		}:
 		default:
 			// Channel is full, skip this output
 		}
 	}
-	m.outputHandlersLock.RUnlock()
 }
 
 // registerOutputHandler registers a handler for command output
@@ -280,65 +223,18 @@ func (m *Manager) unregisterOutputHandler(commandID string) {
 	m.outputHandlersLock.Unlock()
 }
 
-// keepAlive sends periodic ping messages to the agent
-func (m *Manager) keepAlive(agent *Agent) {
-	interval := time.Duration(m.config.Connection.Keepalive) * time.Second
-	log.Printf("Starting keepalive routine for agent %s with interval %v", agent.Config.Name, interval)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		if agent.conn == nil {
-			log.Printf("Keepalive for agent %s stopped: connection is nil", agent.Config.Name)
-			return
-		}
-
-		if err := agent.conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(10*time.Second)); err != nil {
-			log.Printf("Keepalive failed for agent %s: %v", agent.Config.Name, err)
-			agent.setStatus(StatusDisconnected)
-			go m.reconnect(agent)
-			return
-		}
-	}
+// Status returns the current status of the agent
+func (a *Agent) Status() Status {
+	a.statusLock.RLock()
+	defer a.statusLock.RUnlock()
+	return a.status
 }
 
-// reconnect attempts to reconnect to an agent
-func (m *Manager) reconnect(agent *Agent) {
-	log.Printf("Starting reconnection attempts for agent %s", agent.Config.Name)
-	offlineAfterRetries := m.config.Connection.OfflineAfterRetries
-	maxRetries := m.config.Connection.MaxRetries
-	retries := 0
-	retryInterval := m.config.Connection.RetryInterval
+// StreamingOutputCallback is called for each chunk of output during command execution
+type StreamingOutputCallback func(output string, isError bool, isComplete bool)
 
-	// 尝试重连直到成功或达到最大重试次数（如果设置了）
-	for {
-		retries++
-
-		// 如果设置了最大重试次数，并且已经达到，则停止重连
-		if maxRetries > 0 && retries > maxRetries {
-			log.Printf("Max retries (%d) reached for agent %s, stopping reconnection attempts", maxRetries, agent.Config.Name)
-			break
-		}
-
-		log.Printf("Reconnection attempt %d for agent %s", retries, agent.Config.Name)
-
-		time.Sleep(time.Duration(retryInterval) * time.Second)
-		m.connectAgent(agent)
-		if agent.Status() == StatusConnected {
-			log.Printf("Successfully reconnected to agent %s on attempt %d", agent.Config.Name, retries)
-			return
-		}
-
-		// 在指定次数失败后标记为离线，但继续尝试重连
-		if offlineAfterRetries > 0 && retries >= offlineAfterRetries && agent.Status() != StatusDisconnected {
-			log.Printf("Failed to reconnect to agent %s after %d attempts, marking as offline", agent.Config.Name, offlineAfterRetries)
-			agent.setStatus(StatusDisconnected)
-		}
-	}
-
-	// 如果循环退出（达到最大重试次数），标记为离线
-	agent.setStatus(StatusDisconnected)
-}
+// StreamingOutputCallbackWithStop is called for each chunk of output during command execution with stop support
+type StreamingOutputCallbackWithStop func(output string, isError bool, isComplete bool, isStopped bool)
 
 // ExecuteCommand executes a command on an agent
 func (m *Manager) ExecuteCommand(agentName, command string) (string, error) {
@@ -357,12 +253,14 @@ func (m *Manager) ExecuteCommand(agentName, command string) (string, error) {
 	// Generate command ID
 	commandID := fmt.Sprintf("%s-%d", agentName, time.Now().UnixNano())
 
-	// Send command request
-	req := map[string]interface{}{
-		"type":       "execute_command",
-		"command":    command,
-		"command_id": commandID,
+	// Parse command and target from the command string
+	commandName, target, err := parseCommand(command)
+	if err != nil {
+		return "", err
 	}
+
+	// Send command request
+	req := buildCommandRequest(commandName, target, commandID)
 
 	if err := agent.conn.WriteJSON(req); err != nil {
 		return "", fmt.Errorf("failed to send command: %w", err)
@@ -374,62 +272,24 @@ func (m *Manager) ExecuteCommand(agentName, command string) (string, error) {
 	return "Command sent successfully", nil
 }
 
-// StreamingOutputCallback is called for each chunk of output during command execution
-type StreamingOutputCallback func(output string, isError bool, isComplete bool)
-
-// StreamingOutputCallbackWithStop is called for each chunk of output during command execution with stop support
-type StreamingOutputCallbackWithStop func(output string, isError bool, isComplete bool, isStopped bool)
-
 // ExecuteCommandStreaming executes a command on an agent with streaming output
 func (m *Manager) ExecuteCommandStreaming(agentName, command string, callback StreamingOutputCallback) error {
-	m.agentsLock.RLock()
-	agent, exists := m.agents[agentName]
-	m.agentsLock.RUnlock()
-
-	if !exists {
-		return fmt.Errorf("agent not found: %s", agentName)
-	}
-
-	if agent.Status() != StatusConnected {
-		return fmt.Errorf("agent not connected: %s", agentName)
-	}
-
 	// Generate command ID
 	commandID := fmt.Sprintf("%s-%d", agentName, time.Now().UnixNano())
-
-	// Create a channel to receive command output
-	outputChan := make(chan CommandOutput, 100)
-	defer close(outputChan)
-
-	// Register output handler
-	m.registerOutputHandler(commandID, outputChan)
-	defer m.unregisterOutputHandler(commandID)
-
-	// Send command request
-	req := map[string]interface{}{
-		"type":       "execute_command",
-		"command":    command,
-		"command_id": commandID,
-	}
-
-	if err := agent.conn.WriteJSON(req); err != nil {
-		return fmt.Errorf("failed to send command: %w", err)
-	}
-
-	// Process output
-	for output := range outputChan {
-		if output.IsComplete {
-			callback("", false, true) // Signal completion
-			break
-		}
-		callback(output.Output, output.IsError, false)
-	}
-
-	return nil
+	return m.ExecuteCommandStreamingWithStopAndID(agentName, command, commandID, nil, func(output string, isError bool, isComplete bool, isStopped bool) {
+		callback(output, isError, isComplete)
+	})
 }
 
 // ExecuteCommandStreamingWithStop executes a command on an agent with streaming output and stop support
 func (m *Manager) ExecuteCommandStreamingWithStop(agentName, command string, stopChan <-chan bool, callback StreamingOutputCallbackWithStop) error {
+	// Generate command ID
+	commandID := fmt.Sprintf("%s-%d", agentName, time.Now().UnixNano())
+	return m.ExecuteCommandStreamingWithStopAndID(agentName, command, commandID, stopChan, callback)
+}
+
+// ExecuteCommandStreamingWithStopAndID executes a command on an agent with streaming output, stop support and custom command ID
+func (m *Manager) ExecuteCommandStreamingWithStopAndID(agentName, command, commandID string, stopChan <-chan bool, callback StreamingOutputCallbackWithStop) error {
 	m.agentsLock.RLock()
 	agent, exists := m.agents[agentName]
 	m.agentsLock.RUnlock()
@@ -442,8 +302,11 @@ func (m *Manager) ExecuteCommandStreamingWithStop(agentName, command string, sto
 		return fmt.Errorf("agent not connected: %s", agentName)
 	}
 
-	// Generate command ID
-	commandID := fmt.Sprintf("%s-%d", agentName, time.Now().UnixNano())
+	// Parse command and target from the command string
+	commandName, target, err := parseCommand(command)
+	if err != nil {
+		return err
+	}
 
 	// Create a channel to receive command output
 	outputChan := make(chan CommandOutput, 100)
@@ -454,11 +317,7 @@ func (m *Manager) ExecuteCommandStreamingWithStop(agentName, command string, sto
 	defer m.unregisterOutputHandler(commandID)
 
 	// Send command request
-	req := map[string]interface{}{
-		"type":       "execute_command",
-		"command":    command,
-		"command_id": commandID,
-	}
+	req := buildCommandRequest(commandName, target, commandID)
 
 	if err := agent.conn.WriteJSON(req); err != nil {
 		return fmt.Errorf("failed to send command: %w", err)
@@ -477,13 +336,63 @@ func (m *Manager) ExecuteCommandStreamingWithStop(agentName, command string, sto
 			callback("", false, false, true) // Signal stopped
 			return nil
 		case output := <-outputChan:
+			callback(output.Output, output.IsError, output.IsComplete, false)
 			if output.IsComplete {
-				callback("", false, true, false) // Signal completion
 				return nil
 			}
-			callback(output.Output, output.IsError, false, false)
 		}
 	}
+}
+
+// buildAgentInfo creates a standardized agent info map
+func (m *Manager) buildAgentInfo(name string, agent *Agent) map[string]interface{} {
+	// 将后端状态映射为前端期望的格式：0=离线，1=在线
+	frontendStatus := 0 // 默认离线
+	if agent.Status() == StatusConnected {
+		frontendStatus = 1
+	}
+
+	// 获取命令列表
+	agent.commandsLock.RLock()
+	commands := make([]string, len(agent.availableCommands))
+	for i, cmd := range agent.availableCommands {
+		commands[i] = cmd.Name
+	}
+	agent.commandsLock.RUnlock()
+
+	// 计算离线时长（如果离线的话）
+	var offlineDuration string
+	if agent.Status() != StatusConnected {
+		duration := time.Since(agent.lastConnected)
+		if duration < time.Minute {
+			offlineDuration = "刚刚离线"
+		} else if duration < time.Hour {
+			offlineDuration = fmt.Sprintf("%d分钟前离线", int(duration.Minutes()))
+		} else if duration < 24*time.Hour {
+			offlineDuration = fmt.Sprintf("%d小时前离线", int(duration.Hours()))
+		} else {
+			offlineDuration = fmt.Sprintf("%d天前离线", int(duration.Hours()/24))
+		}
+	}
+
+	result := map[string]interface{}{
+		"name":     name,
+		"status":   frontendStatus,
+		"commands": commands,
+		"details": map[string]interface{}{
+			"location":    agent.Details.Location,
+			"datacenter":  agent.Details.Datacenter,
+			"test_ip":     agent.Details.TestIP,
+			"description": agent.Details.Description,
+		},
+		"connection_info": map[string]interface{}{
+			"first_seen":       agent.firstSeen.Format("2006-01-02 15:04:05"),
+			"last_connected":   agent.lastConnected.Format("2006-01-02 15:04:05"),
+			"offline_duration": offlineDuration,
+		},
+	}
+
+	return result
 }
 
 // GetAgents returns a list of all agents with their status and details
@@ -491,148 +400,196 @@ func (m *Manager) GetAgents() []map[string]interface{} {
 	m.agentsLock.RLock()
 	defer m.agentsLock.RUnlock()
 
-	result := make([]map[string]interface{}, 0, len(m.agents))
-	for name, agent := range m.agents {
-		// 将后端状态映射为前端期望的格式：1表示在线，其他表示离线
-		frontendStatus := 0 // 默认离线
-		if agent.Status() == StatusConnected {
-			frontendStatus = 1 // 在线
-		}
-
-		result = append(result, map[string]interface{}{
-			"name":     name,
-			"status":   frontendStatus,
-			"host":     agent.Config.Host,
-			"commands": agent.Config.Commands,
-			"details": map[string]interface{}{
-				"location":    agent.Config.Details.Location,
-				"datacenter":  agent.Config.Details.Datacenter,
-				"test_ip":     agent.Config.Details.TestIP,
-				"description": agent.Config.Details.Description,
-			},
-			"group": m.getAgentGroup(name),
-		})
+	// 先获取所有agent名称并排序
+	names := make([]string, 0, len(m.agents))
+	for name := range m.agents {
+		names = append(names, name)
 	}
+	sort.Strings(names) // 按字母A-Z排序
 
-	return result
-}
-
-// getAgentGroup returns the group name for an agent
-func (m *Manager) getAgentGroup(agentName string) string {
-	for _, group := range m.config.Groups {
-		for _, agent := range group.Agents {
-			if agent == agentName {
-				return group.Name
-			}
+	// 按排序后的顺序构建agent列表
+	agents := make([]map[string]interface{}, 0, len(m.agents))
+	for _, name := range names {
+		if agent, exists := m.agents[name]; exists {
+			agents = append(agents, m.buildAgentInfo(name, agent))
 		}
 	}
-	return ""
+
+	return agents
 }
 
-// GetAgentGroups returns all agents organized by groups with defined order
+// GetAgentGroups returns all agents organized by groups
 func (m *Manager) GetAgentGroups() []map[string]interface{} {
 	m.agentsLock.RLock()
 	defer m.agentsLock.RUnlock()
 
-	// Create a map for quick lookup
-	groupMap := make(map[string][]map[string]interface{})
+	// Group agents by their group name
+	groups := make(map[string][]map[string]interface{})
 
-	// Initialize groups in config order
-	for _, group := range m.config.Groups {
-		groupMap[group.Name] = make([]map[string]interface{}, 0)
+	// 先获取所有agent名称并排序
+	names := make([]string, 0, len(m.agents))
+	for name := range m.agents {
+		names = append(names, name)
 	}
+	sort.Strings(names) // 按字母A-Z排序
 
-	// Handle ungrouped agents
-	ungrouped := make([]map[string]interface{}, 0)
-
-	// Organize agents by group, maintaining config order
-	for _, group := range m.config.Groups {
-		for _, agentName := range group.Agents {
-			if agent, exists := m.agents[agentName]; exists {
-				// 将后端状态映射为前端期望的格式：1表示在线，其他表示离线
-				frontendStatus := 0 // 默认离线
-				if agent.Status() == StatusConnected {
-					frontendStatus = 1 // 在线
-				}
-
-				agentInfo := map[string]interface{}{
-					"name":     agentName,
-					"status":   frontendStatus,
-					"host":     agent.Config.Host,
-					"commands": agent.Config.Commands,
-					"details": map[string]interface{}{
-						"location":    agent.Config.Details.Location,
-						"datacenter":  agent.Config.Details.Datacenter,
-						"test_ip":     agent.Config.Details.TestIP,
-						"description": agent.Config.Details.Description,
-					},
-				}
-				groupMap[group.Name] = append(groupMap[group.Name], agentInfo)
+	// 按排序后的顺序分组
+	for _, name := range names {
+		if agent, exists := m.agents[name]; exists {
+			groupName := agent.Group
+			if groupName == "" {
+				groupName = "Default"
 			}
+
+			if groups[groupName] == nil {
+				groups[groupName] = make([]map[string]interface{}, 0)
+			}
+
+			groups[groupName] = append(groups[groupName], m.buildAgentInfo(name, agent))
 		}
 	}
 
-	// Handle ungrouped agents
-	for name, agent := range m.agents {
-		groupName := m.getAgentGroup(name)
-		if groupName == "" {
-			// 将后端状态映射为前端期望的格式：1表示在线，其他表示离线
-			frontendStatus := 0 // 默认离线
-			if agent.Status() == StatusConnected {
-				frontendStatus = 1 // 在线
-			}
-
-			agentInfo := map[string]interface{}{
-				"name":     name,
-				"status":   frontendStatus,
-				"host":     agent.Config.Host,
-				"commands": agent.Config.Commands,
-				"details": map[string]interface{}{
-					"location":    agent.Config.Details.Location,
-					"datacenter":  agent.Config.Details.Datacenter,
-					"test_ip":     agent.Config.Details.TestIP,
-					"description": agent.Config.Details.Description,
-				},
-			}
-			ungrouped = append(ungrouped, agentInfo)
-		}
+	// 对组名也进行排序
+	groupNames := make([]string, 0, len(groups))
+	for groupName := range groups {
+		groupNames = append(groupNames, groupName)
 	}
+	sort.Strings(groupNames)
 
-	// Build ordered result
-	result := make([]map[string]interface{}, 0)
-
-	// Add groups in config order
-	for _, group := range m.config.Groups {
-		if len(groupMap[group.Name]) > 0 {
-			result = append(result, map[string]interface{}{
-				"name":   group.Name,
-				"agents": groupMap[group.Name],
-			})
-		}
-	}
-
-	// Add ungrouped agents at the end
-	if len(ungrouped) > 0 {
+	// 按排序后的组名顺序构建结果
+	result := make([]map[string]interface{}, 0, len(groups))
+	for _, groupName := range groupNames {
 		result = append(result, map[string]interface{}{
-			"name":   "Ungrouped",
-			"agents": ungrouped,
+			"name":   groupName,
+			"agents": groups[groupName],
 		})
 	}
 
 	return result
 }
 
-// setStatus sets the agent status with thread safety
-func (a *Agent) setStatus(status Status) {
-	a.statusLock.Lock()
-	defer a.statusLock.Unlock()
-	a.status = status
-	a.lastCheck = time.Now()
+// GetAgentCommands returns the available commands for a specific agent
+func (m *Manager) GetAgentCommands(agentName string) []validator.CommandDetail {
+	m.agentsLock.RLock()
+	agent, exists := m.agents[agentName]
+	m.agentsLock.RUnlock()
+
+	if !exists {
+		return []validator.CommandDetail{}
+	}
+
+	agent.commandsLock.RLock()
+	defer agent.commandsLock.RUnlock()
+
+	commands := make([]validator.CommandDetail, len(agent.availableCommands))
+	for i, cmd := range agent.availableCommands {
+		commands[i] = validator.CommandDetail{
+			Name:        cmd.Name,
+			Description: cmd.Description,
+		}
+	}
+
+	return commands
 }
 
-// Status returns the agent status with thread safety
-func (a *Agent) Status() Status {
-	a.statusLock.RLock()
-	defer a.statusLock.RUnlock()
-	return a.status
+// GetAllAvailableCommands returns all unique commands from all connected agents
+func (m *Manager) GetAllAvailableCommands() []validator.CommandDetail {
+	m.agentsLock.RLock()
+	defer m.agentsLock.RUnlock()
+
+	commandMap := make(map[string]validator.CommandDetail)
+
+	for _, agent := range m.agents {
+		if agent.Status() == StatusConnected {
+			agent.commandsLock.RLock()
+			for _, cmd := range agent.availableCommands {
+				commandMap[cmd.Name] = validator.CommandDetail{
+					Name:        cmd.Name,
+					Description: cmd.Description,
+				}
+			}
+			agent.commandsLock.RUnlock()
+		}
+	}
+
+	commands := make([]validator.CommandDetail, 0, len(commandMap))
+	for _, cmd := range commandMap {
+		commands = append(commands, cmd)
+	}
+
+	return commands
+}
+
+// CleanupOfflineAgents removes agents that have been offline for more than the specified duration
+func (m *Manager) CleanupOfflineAgents(maxOfflineDuration time.Duration) int {
+	m.agentsLock.Lock()
+	defer m.agentsLock.Unlock()
+
+	var toDelete []string
+	now := time.Now()
+
+	for name, agent := range m.agents {
+		if agent.Status() == StatusDisconnected {
+			if now.Sub(agent.lastConnected) > maxOfflineDuration {
+				toDelete = append(toDelete, name)
+			}
+		}
+	}
+
+	for _, name := range toDelete {
+		delete(m.agents, name)
+		log.Printf("Cleaned up offline agent: %s", name)
+	}
+
+	return len(toDelete)
+}
+
+// GetAgentStats returns statistics about agents
+func (m *Manager) GetAgentStats() map[string]interface{} {
+	m.agentsLock.RLock()
+	defer m.agentsLock.RUnlock()
+
+	online := 0
+	offline := 0
+	total := len(m.agents)
+
+	for _, agent := range m.agents {
+		if agent.Status() == StatusConnected {
+			online++
+		} else {
+			offline++
+		}
+	}
+
+	return map[string]interface{}{
+		"total":   total,
+		"online":  online,
+		"offline": offline,
+	}
+}
+
+// parseCommand parses a command string into command name and target
+func parseCommand(command string) (string, string, error) {
+	parts := strings.SplitN(strings.TrimSpace(command), " ", 2)
+	if len(parts) == 0 {
+		return "", "", fmt.Errorf("empty command")
+	}
+
+	commandName := parts[0]
+	target := ""
+	if len(parts) > 1 {
+		target = parts[1]
+	}
+
+	return commandName, target, nil
+}
+
+// buildCommandRequest builds a command request
+func buildCommandRequest(commandName, target, commandID string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":         "execute_command",
+		"command_name": commandName,
+		"target":       target,
+		"command_id":   commandID,
+	}
 }

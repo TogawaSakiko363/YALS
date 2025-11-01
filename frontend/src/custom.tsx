@@ -1,7 +1,7 @@
 // 网页自定义配置文件
 export const config = {
   // 网页标题
-  pageTitle: 'Example Networks, LLC. - Looking Glass',
+  pageTitle: 'Example Networks - Looking Glass',
   
   // 右侧页脚文字内容
   footerRightText: '© 2025 Example Networks, LLC.',
@@ -10,7 +10,7 @@ export const config = {
   faviconPath: '/images/favicon.png',
   
   // 网页左上角logo图标路径，请把图像文件放到public/images目录下
-  logoPath: '/images/Example.png',
+  logoPath: '/images/logo.png',
   
   // 网页背景颜色
   backgroundColor: '#f5f4f1'

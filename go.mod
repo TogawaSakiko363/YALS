@@ -1,4 +1,4 @@
-module YALS_SSH
+module YALS
 
 go 1.23.1
 

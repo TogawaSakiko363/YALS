@@ -3,48 +3,52 @@ package main
 import (
 	"flag"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
-	"YALS_SSH/internal/agent"
+	"YALS/internal/agent"
+	"YALS/internal/config"
 )
 
 func main() {
 	// Parse command line flags
-	listen := flag.String("l", "0.0.0.0:9527", "Listen address and port")
-	password := flag.String("p", "", "Connection password")
+	configFile := flag.String("c", "agent.yaml", "Path to agent configuration file")
 	flag.Parse()
 
-	if *password == "" {
-		log.Fatal("Password is required. Use -p flag to specify password.")
+	// Load agent configuration
+	agentConfig, err := config.LoadAgentConfig(*configFile)
+	if err != nil {
+		log.Fatalf("Failed to load agent configuration: %v", err)
 	}
 
-	log.Printf("Starting YALS Agent on %s", *listen)
+	log.Printf("Starting YALS Agent: %s", agentConfig.Agent.Name)
+	log.Printf("Server: %s:%d", agentConfig.Server.Host, agentConfig.Server.Port)
+	log.Printf("Loaded %d allowed commands", len(agentConfig.Commands))
 
-	// Create agent client
-	agentClient := agent.NewClient(*password)
-
-	// Set up HTTP server for WebSocket connections
-	mux := http.NewServeMux()
-	mux.HandleFunc("/ws", agentClient.HandleWebSocket)
-
-	server := &http.Server{
-		Addr:    *listen,
-		Handler: mux,
-	}
-
-	// Start server in a goroutine
-	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Failed to start agent server: %v", err)
-		}
-	}()
+	// Create agent client with configuration
+	agentClient := agent.NewClientWithConfig(agentConfig)
 
 	// Set up signal handling for graceful shutdown
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	// Connect to server with retry logic
+	go func() {
+		for {
+			err := agentClient.ConnectToServer()
+			if err != nil {
+				log.Printf("Connection failed: %v", err)
+				log.Println("Retrying in 10 seconds...")
+				time.Sleep(10 * time.Second)
+				continue
+			}
+			// If we reach here, connection was closed normally
+			log.Println("Connection closed, retrying in 5 seconds...")
+			time.Sleep(5 * time.Second)
+		}
+	}()
 
 	// Wait for interrupt signal
 	<-stop

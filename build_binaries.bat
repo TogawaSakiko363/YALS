@@ -58,4 +58,4 @@ echo   Linux x64 Agent:    bin\linux_amd64\yals_agent
 echo.
 echo Usage:
 echo   Server: ./yals_server -config config.yaml
-echo   Agent:  ./yals_agent -l 0.0.0.0:9527 -p abc123
+echo   Agent:  ./yals_agent -c agent.yaml

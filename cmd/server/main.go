@@ -10,15 +10,23 @@ import (
 	"syscall"
 	"time"
 
-	"YALS_SSH/internal/agent"
-	"YALS_SSH/internal/config"
-	"YALS_SSH/internal/handler"
+	"YALS/internal/agent"
+	"YALS/internal/config"
+	"YALS/internal/handler"
 )
 
 func main() {
 	// Parse command line flags
-	configFile := flag.String("config", "config.yaml", "Path to configuration file")
+	configFile := flag.String("c", "config.yaml", "Path to configuration file")
+	webDir := flag.String("w", "./web", "Path to web frontend directory")
 	flag.Parse()
+
+	// Check if web directory exists
+	if _, err := os.Stat(*webDir); os.IsNotExist(err) {
+		log.Printf("Warning: Web directory '%s' does not exist", *webDir)
+	} else {
+		log.Printf("Using web directory: %s", *webDir)
+	}
 
 	// Load configuration
 	cfg, err := config.LoadConfig(*configFile)
@@ -30,10 +38,33 @@ func main() {
 	setupLogging(cfg.Server.LogLevel)
 
 	// Create agent manager
-	agentManager := agent.NewManager(cfg)
+	agentManager := agent.NewManager()
 
-	// Connect to agents
-	agentManager.Connect()
+	// Configure offline agent cleanup (if enabled)
+	if cfg.Connection.DeleteOfflineAgents > 0 {
+		maxOfflineDuration := time.Duration(cfg.Connection.DeleteOfflineAgents) * time.Second
+		log.Printf("Offline agent cleanup enabled: delete after %v offline", maxOfflineDuration)
+
+		// 启动定期清理（使用keepalive间隔，但频率降低10倍以减少资源消耗）
+		go func() {
+			checkInterval := time.Duration(cfg.Connection.Keepalive*10) * time.Second
+			if checkInterval < time.Minute {
+				checkInterval = time.Minute // 最少1分钟检查一次
+			}
+
+			ticker := time.NewTicker(checkInterval)
+			defer ticker.Stop()
+
+			for range ticker.C {
+				cleaned := agentManager.CleanupOfflineAgents(maxOfflineDuration)
+				if cleaned > 0 {
+					log.Printf("Cleaned up %d offline agents (offline > %v)", cleaned, maxOfflineDuration)
+				}
+			}
+		}()
+	} else {
+		log.Printf("Offline agent cleanup disabled (delete_offline_agents = 0)")
+	}
 
 	// Create HTTP handler
 	pingInterval := time.Duration(cfg.WebSocket.PingInterval) * time.Second
@@ -42,7 +73,7 @@ func main() {
 
 	// Set up HTTP server
 	mux := http.NewServeMux()
-	h.SetupRoutes(mux)
+	h.SetupRoutes(mux, *webDir)
 
 	// Start HTTP server
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
