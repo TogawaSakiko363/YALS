@@ -81,7 +81,7 @@ bash <(curl -sL https://mirror.autec.my/yals/install_agent.sh) update
 1. **编译程序**：
 ```bash
 # 克隆项目
-git clone https://github.com/your-repo/yals.git
+git clone https://github.com/TogawaSakiko363/YALS.git
 cd yals
 
 # Windows环境编译
