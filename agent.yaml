@@ -22,18 +22,18 @@ agent:
 commands:
   ping:
     template: "ping -c 4"
-    description: "网络连通性测试"
+    description: "Network connectivity test"
   mtr:
     template: "mtr -rw -c 4"
-    description: "网络路由和丢包分析"
+    description: "Network route and packet loss analysis"
   nexttrace:
     template: "nexttrace --nocolor --map --ipv4"
-    description: "可视化路由跟踪"
+    description: "Visual route tracing"
   
-  # 示例：添加新命令
+  # Example: Add new commands
   # traceroute:
   #   template: "traceroute -n"
-  #   description: "路由跟踪"
+  #   description: "Route tracing"
   # dig:
   #   template: "dig +short"
-  #   description: "DNS查询"
+  #   description: "DNS lookup"

@@ -29,7 +29,7 @@ export const CommandHistory: React.FC<CommandHistoryProps> = ({
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text).then(() => {
-      // 可以添加一个toast通知
+      // Could add a toast notification here
     });
   };
 
@@ -51,7 +51,7 @@ export const CommandHistory: React.FC<CommandHistoryProps> = ({
       <div className="command-history-header">
         <div className="command-history-title">
           <History className="icon-small text-gray-600" />
-          <h2 className="title-base">执行历史</h2>
+          <h2 className="title-base">Execution History</h2>
           <span className="history-count">({history.length})</span>
         </div>
         
@@ -61,7 +61,7 @@ export const CommandHistory: React.FC<CommandHistoryProps> = ({
             className="clear-history-btn"
           >
             <Trash2 className="icon-xs" />
-            清空
+            Clear
           </button>
         )}
       </div>
@@ -69,8 +69,8 @@ export const CommandHistory: React.FC<CommandHistoryProps> = ({
       {history.length === 0 ? (
         <div className="empty-history-state">
           <History className="empty-history-icon" />
-          <p className="empty-history-text">暂无历史</p>
-          <p className="empty-history-subtext">执行诊断后显示结果</p>
+          <p className="empty-history-text">No History</p>
+          <p className="empty-history-subtext">Results will appear after running diagnostics</p>
         </div>
       ) : (
         <div className="history-list">
@@ -132,11 +132,11 @@ export const CommandHistory: React.FC<CommandHistoryProps> = ({
 
                   <div className="history-item-status-text">
                     {isActive && (
-                      <span className="status-text running">执行中</span>
+                      <span className="status-text running">Running</span>
                     )}
                     {hasResponse && !isActive && (
                       <span className={`status-text ${isSuccess ? 'success' : 'error'}`}>
-                        {isSuccess ? '完成' : '失败'}
+                        {isSuccess ? 'Completed' : 'Failed'}
                       </span>
                     )}
                   </div>
@@ -147,7 +147,7 @@ export const CommandHistory: React.FC<CommandHistoryProps> = ({
                     {item.response?.success ? (
                         <div>
                           <div className="result-header">
-                            <h4 className="result-title">结果</h4>
+                            <h4 className="result-title">Result</h4>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -156,20 +156,20 @@ export const CommandHistory: React.FC<CommandHistoryProps> = ({
                               className="copy-result-btn"
                             >
                               <Copy className="icon-xs" />
-                              复制
+                              Copy
                             </button>
                           </div>
                           <div className="result-output-container">
                             <div className="result-output">
-                              {item.response.output || '无输出内容'}
+                              {item.response.output || 'No output'}
                             </div>
                           </div>
                         </div>
                     ) : (
                       <div>
-                        <h4 className="error-title">失败</h4>
+                        <h4 className="error-title">Failed</h4>
                         <div className="error-message">
-                          {item.response?.error || '未知错误'}
+                          {item.response?.error || 'Unknown error'}
                         </div>
                       </div>
                     )}

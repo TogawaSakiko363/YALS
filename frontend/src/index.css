@@ -2,9 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 移动端字体优化 */
+/* Mobile font optimization */
 html {
-  font-size: 100%; /* 使用百分比作为基准 */
+  font-size: 100%;
+  /* Use percentage as baseline */
   -webkit-text-size-adjust: 100%;
   -moz-text-size-adjust: 100%;
   -ms-text-size-adjust: 100%;
@@ -13,7 +14,8 @@ html {
 
 @media screen and (max-width: 768px) {
   html {
-    font-size: 87.5%; /* 14px / 16px = 87.5% */
+    font-size: 87.5%;
+    /* 14px / 16px = 87.5% */
   }
 }
 
@@ -25,28 +27,32 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* 移动端触摸优化 */
+/* Mobile touch optimization */
 @media (hover: none) and (pointer: coarse) {
-  button, 
-  [role="button"], 
-  [type="button"], 
-  [type="submit"], 
+
+  button,
+  [role="button"],
+  [type="button"],
+  [type="submit"],
   [type="reset"] {
-    min-height: 2.75rem; /* 44px / 16px = 2.75rem */
-    min-width: 2.75rem; /* 44px / 16px = 2.75rem */
+    min-height: 2.75rem;
+    /* 44px / 16px = 2.75rem */
+    min-width: 2.75rem;
+    /* 44px / 16px = 2.75rem */
   }
 }
 
-/* 确保终端容器能够动态变换大小 */
+/* Ensure terminal container can dynamically resize */
 div[ref="terminalRef"] {
-  min-height: 7.5rem; /* 120px / 16px = 7.5rem */
+  min-height: 7.5rem;
+  /* 120px / 16px = 7.5rem */
   height: auto !important;
   flex-grow: 1;
 }
 
-/* === 应用全局样式 === */
+/* === Application Global Styles === */
 
-/* 应用容器 */
+/* Application container */
 .app-container {
   min-height: 100vh;
   background-color: #f9fafb;
@@ -54,7 +60,7 @@ div[ref="terminalRef"] {
   flex-direction: column;
 }
 
-/* 容器基础样式 */
+/* Container base styles */
 .container {
   max-width: 80%;
   width: 100%;
@@ -62,17 +68,18 @@ div[ref="terminalRef"] {
   margin-right: auto;
 }
 
-/* 当设备处于竖屏状态时（横向分辨率小于纵向分辨率），取消最大宽度限制 */
+/* When device is in portrait mode (horizontal resolution < vertical resolution), remove max-width limit */
 @media (orientation: portrait) {
   .container {
     max-width: 100%;
-    padding-left: 1rem; /* 保留一些左右内边距 */
+    padding-left: 1rem;
+    /* Keep some left and right padding */
     padding-right: 1rem;
     box-sizing: border-box;
   }
 }
 
-/* 应用头部 */
+/* Application header */
 .app-header {
   background-color: #ffffff;
   box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
@@ -84,34 +91,40 @@ div[ref="terminalRef"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 4rem; /* 64px / 16px = 4rem */
+  height: 4rem;
+  /* 64px / 16px = 4rem */
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 0.75rem; /* 12px / 16px = 0.75rem */
+  gap: 0.75rem;
+  /* 12px / 16px = 0.75rem */
 }
 
 .logo-container {
   display: flex;
   align-items: center;
-  gap: 0.5rem; /* 8px / 16px = 0.5rem */
+  gap: 0.5rem;
+  /* 8px / 16px = 0.5rem */
 }
 
 .logo-image {
-  width: 10rem; /* 160px / 16px = 10rem */
-  height: 3.75rem; /* 60px / 16px = 3.75rem */
+  width: 10rem;
+  /* 160px / 16px = 10rem */
+  height: 3.75rem;
+  /* 60px / 16px = 3.75rem */
   object-fit: contain;
 }
 
 .app-title h1 {
-  font-size: 1.125rem; /* 18px / 16px = 1.125rem */
+  font-size: 1.125rem;
+  /* 18px / 16px = 1.125rem */
   font-weight: 700;
   color: #111827;
 }
 
-/* 主内容区域 */
+/* Main content area */
 .main-content {
   flex: 1;
   display: flex;
@@ -121,7 +134,8 @@ div[ref="terminalRef"] {
 .grid-container {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 1rem 1.5rem; /* 16px / 16px = 1rem, 24px / 16px = 1.5rem */
+  gap: 1rem 1.5rem;
+  /* 16px / 16px = 1rem, 24px / 16px = 1.5rem */
   height: 100%;
 }
 
@@ -131,7 +145,7 @@ div[ref="terminalRef"] {
   }
 }
 
-/* 应用底部 */
+/* Application footer */
 .app-footer {
   background-color: #ffffff;
   border-top: 1px solid #e5e7eb;
@@ -143,7 +157,8 @@ div[ref="terminalRef"] {
   flex-direction: column;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 0.5rem; /* 8px / 16px = 0.5rem */
+  gap: 0.5rem;
+  /* 8px / 16px = 0.5rem */
 }
 
 @media (min-width: 640px) {
@@ -156,11 +171,13 @@ div[ref="terminalRef"] {
 .footer-left {
   display: flex;
   flex-direction: column;
-  gap: 0.125rem; /* 2px / 16px = 0.125rem */
+  gap: 0.125rem;
+  /* 2px / 16px = 0.125rem */
 }
 
 .github-link {
-  font-size: 0.875rem; /* 14px / 16px = 0.875rem */
+  font-size: 0.875rem;
+  /* 14px / 16px = 0.875rem */
   color: #6b7280;
   text-decoration: none;
   transition: color 150ms;
@@ -172,62 +189,75 @@ div[ref="terminalRef"] {
 }
 
 .version-info {
-  font-size: 0.75rem; /* 12px / 16px = 0.75rem */
+  font-size: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   color: #6b7280;
 }
 
 .footer-right {
-  font-size: 0.875rem; /* 14px / 16px = 0.875rem */
+  font-size: 0.875rem;
+  /* 14px / 16px = 0.875rem */
   color: #6b7280;
 }
 
-/* 标题样式 */
+/* Title styles */
 .title-large {
-  font-size: 1.125rem; /* 18px / 16px = 1.125rem */
+  font-size: 1.125rem;
+  /* 18px / 16px = 1.125rem */
   font-weight: 700;
   color: #111827;
 }
 
 .title-base {
-  font-size: 1rem; /* 16px / 16px = 1rem */
+  font-size: 1rem;
+  /* 16px / 16px = 1rem */
   font-weight: 600;
   color: #111827;
 }
 
-/* 图标尺寸 */
+/* Icon sizes */
 .icon-small {
-  width: 1rem; /* 16px / 16px = 1rem */
-  height: 1rem; /* 16px / 16px = 1rem */
+  width: 1rem;
+  /* 16px / 16px = 1rem */
+  height: 1rem;
+  /* 16px / 16px = 1rem */
 }
 
 .icon-xs {
-  width: 0.75rem; /* 12px / 16px = 0.75rem */
-  height: 0.75rem; /* 12px / 16px = 0.75rem */
+  width: 0.75rem;
+  /* 12px / 16px = 0.75rem */
+  height: 0.75rem;
+  /* 12px / 16px = 0.75rem */
 }
 
-/* === 组件样式统一管理 === */
+/* === Component Styles Unified Management === */
 
-/* 面板标题样式 */
+/* Panel title styles */
 .panel-title {
   display: flex;
   align-items: center;
-  gap: 0.5rem; /* 8px / 16px = 0.5rem */
-  margin-bottom: 0.75rem; /* 12px / 16px = 0.75rem */
+  gap: 0.5rem;
+  /* 8px / 16px = 0.5rem */
+  margin-bottom: 0.75rem;
+  /* 12px / 16px = 0.75rem */
 }
 
 .panel-title-icon {
-  width: 1rem; /* 16px / 16px = 1rem */
-  height: 1rem; /* 16px / 16px = 1rem */
+  width: 1rem;
+  /* 16px / 16px = 1rem */
+  height: 1rem;
+  /* 16px / 16px = 1rem */
   color: #4b5563;
 }
 
 .panel-title-text {
-  font-size: 1rem; /* 16px / 16px = 1rem */
+  font-size: 1rem;
+  /* 16px / 16px = 1rem */
   font-weight: 600;
   color: #111827;
 }
 
-/* Agent选择器样式 */
+/* Agent selector styles */
 .agent-item-container {
   border-radius: 0.5rem;
   border: 1px solid #e5e7eb;
@@ -259,28 +289,34 @@ div[ref="terminalRef"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.75rem; /* 12px / 16px = 0.75rem */
+  padding: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   cursor: pointer;
 }
 
 .agent-details {
-  padding: 0.25rem 0.75rem 0.75rem 0.75rem; /* 4px / 16px = 0.25rem, 12px / 16px = 0.75rem */
+  padding: 0.25rem 0.75rem 0.75rem 0.75rem;
+  /* 4px / 16px = 0.25rem, 12px / 16px = 0.75rem */
   border-top: 1px solid #f3f4f6;
 }
 
 .agent-details-text {
-  font-size: 0.75rem; /* 12px / 16px = 0.75rem */
+  font-size: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   color: #6b7280;
 }
 
-.agent-details-text + .agent-details-text {
-  margin-top: 0.25rem; /* 4px / 16px = 0.25rem */
+.agent-details-text+.agent-details-text {
+  margin-top: 0.25rem;
+  /* 4px / 16px = 0.25rem */
 }
 
-/* 状态图标样式 */
+/* Status icon styles */
 .status-icon {
-  width: 1rem; /* 16px / 16px = 1rem */
-  height: 1rem; /* 16px / 16px = 1rem */
+  width: 1rem;
+  /* 16px / 16px = 1rem */
+  height: 1rem;
+  /* 16px / 16px = 1rem */
   flex-shrink: 0;
 }
 
@@ -292,13 +328,14 @@ div[ref="terminalRef"] {
   color: #9ca3af;
 }
 
-/* 命令历史样式 */
+/* Command history styles */
 .command-history-container {
   background-color: #ffffff;
   border-radius: 0.5rem;
   box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   border: 1px solid #e5e7eb;
-  padding: 1rem; /* 16px / 16px = 1rem */
+  padding: 1rem;
+  /* 16px / 16px = 1rem */
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -308,26 +345,32 @@ div[ref="terminalRef"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 0.75rem; /* 12px / 16px = 0.75rem */
+  margin-bottom: 0.75rem;
+  /* 12px / 16px = 0.75rem */
 }
 
 .command-history-title {
   display: flex;
   align-items: center;
-  gap: 0.5rem; /* 8px / 16px = 0.5rem */
+  gap: 0.5rem;
+  /* 8px / 16px = 0.5rem */
 }
 
 .history-count {
-  font-size: 0.75rem; /* 12px / 16px = 0.75rem */
+  font-size: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   color: #6b7280;
 }
 
 .clear-history-btn {
   display: flex;
   align-items: center;
-  gap: 0.25rem; /* 4px / 16px = 0.25rem */
-  padding: 0.25rem 0.5rem; /* 4px / 16px = 0.25rem, 8px / 16px = 0.5rem */
-  font-size: 0.75rem; /* 12px / 16px = 0.75rem */
+  gap: 0.25rem;
+  /* 4px / 16px = 0.25rem */
+  padding: 0.25rem 0.5rem;
+  /* 4px / 16px = 0.25rem, 8px / 16px = 0.5rem */
+  font-size: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   color: #dc2626;
   transition: background-color 150ms;
   border-radius: 0.375rem;
@@ -344,29 +387,37 @@ div[ref="terminalRef"] {
   justify-content: center;
   color: #6b7280;
   flex: 1;
-  padding: 2rem 0; /* 32px / 16px = 2rem */
+  padding: 2rem 0;
+  /* 32px / 16px = 2rem */
 }
 
 .empty-history-icon {
-  width: 2rem; /* 32px / 16px = 2rem */
-  height: 2rem; /* 32px / 16px = 2rem */
-  margin-bottom: 0.5rem; /* 8px / 16px = 0.5rem */
+  width: 2rem;
+  /* 32px / 16px = 2rem */
+  height: 2rem;
+  /* 32px / 16px = 2rem */
+  margin-bottom: 0.5rem;
+  /* 8px / 16px = 0.5rem */
   color: #d1d5db;
 }
 
 .empty-history-text {
-  font-size: 0.875rem; /* 14px / 16px = 0.875rem */
+  font-size: 0.875rem;
+  /* 14px / 16px = 0.875rem */
 }
 
 .empty-history-subtext {
-  font-size: 0.75rem; /* 12px / 16px = 0.75rem */
-  margin-top: 0.125rem; /* 2px / 16px = 0.125rem */
+  font-size: 0.75rem;
+  /* 12px / 16px = 0.75rem */
+  margin-top: 0.125rem;
+  /* 2px / 16px = 0.125rem */
 }
 
 .history-list {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem; /* 8px / 16px = 0.5rem */
+  gap: 0.5rem;
+  /* 8px / 16px = 0.5rem */
   flex: 1;
 }
 
@@ -396,7 +447,8 @@ div[ref="terminalRef"] {
 .history-item-info {
   display: flex;
   align-items: center;
-  gap: 0.5rem; /* 8px / 16px = 0.5rem */
+  gap: 0.5rem;
+  /* 8px / 16px = 0.5rem */
   flex: 1;
   min-width: 0;
 }
@@ -404,12 +456,15 @@ div[ref="terminalRef"] {
 .history-item-status {
   display: flex;
   align-items: center;
-  gap: 0.25rem; /* 4px / 16px = 0.25rem */
+  gap: 0.25rem;
+  /* 4px / 16px = 0.25rem */
 }
 
 .status-indicator {
-  width: 0.5rem; /* 8px / 16px = 0.5rem */
-  height: 0.5rem; /* 8px / 16px = 0.5rem */
+  width: 0.5rem;
+  /* 8px / 16px = 0.5rem */
+  height: 0.5rem;
+  /* 8px / 16px = 0.5rem */
   border-radius: 50%;
   background-color: #d1d5db;
 }
@@ -420,18 +475,23 @@ div[ref="terminalRef"] {
 }
 
 @keyframes pulse {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0.5;
   }
 }
 
 .command-type-badge {
-  padding: 0.125rem 0.375rem; /* 2px / 16px = 0.125rem, 6px / 16px = 0.375rem */
+  padding: 0.125rem 0.375rem;
+  /* 2px / 16px = 0.125rem, 6px / 16px = 0.375rem */
   border-radius: 0.25rem;
-  font-size: 0.75rem; /* 12px / 16px = 0.75rem */
+  font-size: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   font-weight: 500;
 }
 
@@ -458,7 +518,8 @@ div[ref="terminalRef"] {
 .history-item-meta {
   display: flex;
   align-items: center;
-  gap: 0.75rem; /* 12px / 16px = 0.75rem */
+  gap: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   flex: 1;
   min-width: 0;
 }
@@ -466,19 +527,23 @@ div[ref="terminalRef"] {
 .meta-item {
   display: flex;
   align-items: center;
-  gap: 0.25rem; /* 4px / 16px = 0.25rem */
-  font-size: 0.75rem; /* 12px / 16px = 0.75rem */
+  gap: 0.25rem;
+  /* 4px / 16px = 0.25rem */
+  font-size: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   color: #6b7280;
 }
 
 .history-item-status-text {
   display: flex;
   align-items: center;
-  gap: 0.375rem; /* 6px / 16px = 0.375rem */
+  gap: 0.375rem;
+  /* 6px / 16px = 0.375rem */
 }
 
 .status-text {
-  font-size: 0.75rem; /* 12px / 16px = 0.75rem */
+  font-size: 0.75rem;
+  /* 12px / 16px = 0.75rem */
 }
 
 .status-text.running {
@@ -495,7 +560,8 @@ div[ref="terminalRef"] {
 
 .history-item-content {
   border-top: 1px solid #e5e7eb;
-  padding: 0.75rem; /* 12px / 16px = 0.75rem */
+  padding: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   background-color: #f9fafb;
 }
 
@@ -503,11 +569,13 @@ div[ref="terminalRef"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 0.25rem; /* 4px / 16px = 0.25rem */
+  margin-bottom: 0.25rem;
+  /* 4px / 16px = 0.25rem */
 }
 
 .result-title {
-  font-size: 0.75rem; /* 12px / 16px = 0.75rem */
+  font-size: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   font-weight: 500;
   color: #111827;
 }
@@ -515,9 +583,12 @@ div[ref="terminalRef"] {
 .copy-result-btn {
   display: flex;
   align-items: center;
-  gap: 0.125rem; /* 2px / 16px = 0.125rem */
-  padding: 0.125rem 0.375rem; /* 2px / 16px = 0.125rem, 6px / 16px = 0.375rem */
-  font-size: 0.75rem; /* 12px / 16px = 0.75rem */
+  gap: 0.125rem;
+  /* 2px / 16px = 0.125rem */
+  padding: 0.125rem 0.375rem;
+  /* 2px / 16px = 0.125rem, 6px / 16px = 0.375rem */
+  font-size: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   color: #6b7280;
   transition: background-color 150ms;
   border-radius: 0.25rem;
@@ -528,18 +599,21 @@ div[ref="terminalRef"] {
 }
 
 .result-output-container {
-  min-height: 3.125rem; /* 50px / 16px = 3.125rem */
+  min-height: 3.125rem;
+  /* 50px / 16px = 3.125rem */
 }
 
 @media (min-width: 640px) {
   .result-output-container {
-    min-height: 6.25rem; /* 100px / 16px = 6.25rem */
+    min-height: 6.25rem;
+    /* 100px / 16px = 6.25rem */
   }
 }
 
 @media (min-width: 768px) {
   .result-output-container {
-    min-height: 9.375rem; /* 150px / 16px = 9.375rem */
+    min-height: 9.375rem;
+    /* 150px / 16px = 9.375rem */
   }
 }
 
@@ -547,9 +621,11 @@ div[ref="terminalRef"] {
   background-color: #1f2937;
   color: #4ade80;
   font-family: 'Consolas', 'Courier New', 'Monaco', 'Menlo', 'Ubuntu Mono', 'monospace';
-  font-size: clamp(0.6875rem, 1vw, 1rem); /* 11px / 16px = 0.6875rem, 16px / 16px = 1rem */
+  font-size: clamp(0.6875rem, 1vw, 1rem);
+  /* 11px / 16px = 0.6875rem, 16px / 16px = 1rem */
   line-height: 1.5;
-  padding: 1rem; /* 16px / 16px = 1rem */
+  padding: 1rem;
+  /* 16px / 16px = 1rem */
   border-radius: 0.375rem;
   border: 1px solid #374151;
   white-space: pre-wrap;
@@ -561,17 +637,21 @@ div[ref="terminalRef"] {
 }
 
 .error-title {
-  font-size: 0.75rem; /* 12px / 16px = 0.75rem */
+  font-size: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   font-weight: 500;
   color: #991b1b;
-  margin-bottom: 0.25rem; /* 4px / 16px = 0.25rem */
+  margin-bottom: 0.25rem;
+  /* 4px / 16px = 0.25rem */
 }
 
 .error-message {
-  font-size: 0.75rem; /* 12px / 16px = 0.75rem */
+  font-size: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   color: #b91c1c;
   background-color: #fee2e2;
-  padding: 0.5rem; /* 8px / 16px = 0.5rem */
+  padding: 0.5rem;
+  /* 8px / 16px = 0.5rem */
   border-radius: 0.375rem;
   border: 1px solid #fecaca;
 }
@@ -580,15 +660,19 @@ div[ref="terminalRef"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 0.75rem; /* 12px / 16px = 0.75rem */
+  margin-bottom: 0.75rem;
+  /* 12px / 16px = 0.75rem */
 }
 
 .clear-history-btn {
   display: flex;
   align-items: center;
-  gap: 0.25rem; /* 4px / 16px = 0.25rem */
-  padding: 0.25rem 0.5rem; /* 4px / 16px = 0.25rem, 8px / 16px = 0.5rem */
-  font-size: 0.75rem; /* 12px / 16px = 0.75rem */
+  gap: 0.25rem;
+  /* 4px / 16px = 0.25rem */
+  padding: 0.25rem 0.5rem;
+  /* 4px / 16px = 0.25rem, 8px / 16px = 0.5rem */
+  font-size: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   color: #dc2626;
   transition: background-color 150ms;
   border-radius: 0.375rem;
@@ -605,23 +689,30 @@ div[ref="terminalRef"] {
   justify-content: center;
   color: #6b7280;
   flex: 1;
-  padding: 2rem 0; /* 32px / 16px = 2rem */
+  padding: 2rem 0;
+  /* 32px / 16px = 2rem */
 }
 
 .history-empty-icon {
-  width: 2rem; /* 32px / 16px = 2rem */
-  height: 2rem; /* 32px / 16px = 2rem */
-  margin-bottom: 0.5rem; /* 8px / 16px = 0.5rem */
+  width: 2rem;
+  /* 32px / 16px = 2rem */
+  height: 2rem;
+  /* 32px / 16px = 2rem */
+  margin-bottom: 0.5rem;
+  /* 8px / 16px = 0.5rem */
   color: #d1d5db;
 }
 
 .history-empty-text {
-  font-size: 0.875rem; /* 14px / 16px = 0.875rem */
+  font-size: 0.875rem;
+  /* 14px / 16px = 0.875rem */
 }
 
 .history-empty-subtext {
-  font-size: 0.75rem; /* 12px / 16px = 0.75rem */
-  margin-top: 0.125rem; /* 2px / 16px = 0.125rem */
+  font-size: 0.75rem;
+  /* 12px / 16px = 0.75rem */
+  margin-top: 0.125rem;
+  /* 2px / 16px = 0.125rem */
 }
 
 .history-item {
@@ -640,20 +731,24 @@ div[ref="terminalRef"] {
 }
 
 .history-item-header {
-  padding: 0.75rem; /* 12px / 16px = 0.75rem */
+  padding: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   cursor: pointer;
 }
 
-/* 连接状态样式 */
+/* Connection status styles */
 .connection-status {
   display: flex;
   align-items: center;
-  gap: 0.5rem; /* 8px / 16px = 0.5rem */
+  gap: 0.5rem;
+  /* 8px / 16px = 0.5rem */
 }
 
 .connection-status-icon {
-  width: 1.25rem; /* 20px / 16px = 1.25rem */
-  height: 1.25rem; /* 20px / 16px = 1.25rem */
+  width: 1.25rem;
+  /* 20px / 16px = 1.25rem */
+  height: 1.25rem;
+  /* 20px / 16px = 1.25rem */
 }
 
 .connection-status-icon.connected {
@@ -669,7 +764,8 @@ div[ref="terminalRef"] {
 }
 
 .connection-status-text {
-  font-size: 0.875rem; /* 14px / 16px = 0.875rem */
+  font-size: 0.875rem;
+  /* 14px / 16px = 0.875rem */
   font-weight: 500;
 }
 
@@ -685,11 +781,12 @@ div[ref="terminalRef"] {
   color: #dc2626;
 }
 
-/* 命令面板样式 */
+/* Command panel styles */
 .command-panel-container {
   display: flex;
   flex-direction: column;
-  gap: 1rem; /* 16px / 16px = 1rem */
+  gap: 1rem;
+  /* 16px / 16px = 1rem */
 }
 
 .command-test-container {
@@ -697,13 +794,15 @@ div[ref="terminalRef"] {
   border-radius: 0.5rem;
   box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   border: 1px solid #e5e7eb;
-  padding: 1rem; /* 16px / 16px = 1rem */
+  padding: 1rem;
+  /* 16px / 16px = 1rem */
 }
 
 .command-actions-desktop {
   display: none;
   align-items: flex-end;
-  gap: 0.5rem; /* 8px / 16px = 0.5rem */
+  gap: 0.5rem;
+  /* 8px / 16px = 0.5rem */
 }
 
 @media (min-width: 640px) {
@@ -715,7 +814,8 @@ div[ref="terminalRef"] {
 .command-actions-mobile {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem; /* 8px / 16px = 0.5rem */
+  gap: 0.5rem;
+  /* 8px / 16px = 0.5rem */
 }
 
 @media (min-width: 640px) {
@@ -730,18 +830,24 @@ div[ref="terminalRef"] {
 
 .command-label {
   display: block;
-  font-size: 0.875rem; /* 14px / 16px = 0.875rem */
+  font-size: 0.875rem;
+  /* 14px / 16px = 0.875rem */
   font-weight: 500;
   color: #374151;
-  margin-bottom: 0.25rem; /* 4px / 16px = 0.25rem */
+  margin-bottom: 0.25rem;
+  /* 4px / 16px = 0.25rem */
 }
 
 .command-select {
   width: auto;
-  min-width: 5rem; /* 80px / 16px = 5rem */
-  padding: 0.5rem 0.75rem; /* 8px / 16px = 0.5rem, 12px / 16px = 0.75rem */
-  height: 2.25rem; /* 36px / 16px = 2.25rem */
-  font-size: 0.875rem; /* 14px / 16px = 0.875rem */
+  min-width: 5rem;
+  /* 80px / 16px = 5rem */
+  padding: 0.5rem 0.75rem;
+  /* 8px / 16px = 0.5rem, 12px / 16px = 0.75rem */
+  height: 2.25rem;
+  /* 36px / 16px = 2.25rem */
+  font-size: 0.875rem;
+  /* 14px / 16px = 0.875rem */
   border: 1px solid #d1d5db;
   border-radius: 0.375rem;
   transition: all 200ms;
@@ -761,9 +867,12 @@ div[ref="terminalRef"] {
 
 .command-target-input {
   width: 100%;
-  padding: 0.5rem 0.75rem; /* 8px / 16px = 0.5rem, 12px / 16px = 0.75rem */
-  height: 2.25rem; /* 36px / 16px = 2.25rem */
-  font-size: 0.875rem; /* 14px / 16px = 0.875rem */
+  padding: 0.5rem 0.75rem;
+  /* 8px / 16px = 0.5rem, 12px / 16px = 0.75rem */
+  height: 2.25rem;
+  /* 36px / 16px = 2.25rem */
+  font-size: 0.875rem;
+  /* 14px / 16px = 0.875rem */
   border: 1px solid #d1d5db;
   border-radius: 0.375rem;
   transition: all 200ms;
@@ -776,19 +885,24 @@ div[ref="terminalRef"] {
 }
 
 .command-button-container {
-  margin-left: 0.25rem; /* 4px / 16px = 0.25rem */
+  margin-left: 0.25rem;
+  /* 4px / 16px = 0.25rem */
 }
 
 .command-button {
-  height: 2.25rem; /* 36px / 16px = 2.25rem */
-  padding: 0.5rem 1rem; /* 8px / 16px = 0.5rem, 16px / 16px = 1rem */
+  height: 2.25rem;
+  /* 36px / 16px = 2.25rem */
+  padding: 0.5rem 1rem;
+  /* 8px / 16px = 0.5rem, 16px / 16px = 1rem */
   border-radius: 0.375rem;
-  font-size: 0.875rem; /* 14px / 16px = 0.875rem */
+  font-size: 0.875rem;
+  /* 14px / 16px = 0.875rem */
   font-weight: 500;
   transition: all 200ms;
   display: flex;
   align-items: center;
-  gap: 0.375rem; /* 6px / 16px = 0.375rem */
+  gap: 0.375rem;
+  /* 6px / 16px = 0.375rem */
 }
 
 .command-button.primary {
@@ -823,9 +937,11 @@ div[ref="terminalRef"] {
 }
 
 .command-status {
-  font-size: 0.75rem; /* 12px / 16px = 0.75rem */
+  font-size: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   color: #6b7280;
-  margin-top: 0.25rem; /* 4px / 16px = 0.25rem */
+  margin-top: 0.25rem;
+  /* 4px / 16px = 0.25rem */
 }
 
 .command-status.warning {
@@ -836,7 +952,7 @@ div[ref="terminalRef"] {
   color: #dc2626;
 }
 
-/* 终端样式 */
+/* Terminal styles */
 .terminal-container {
   background-color: #1f2937;
   border-radius: 0.5rem;
@@ -846,19 +962,23 @@ div[ref="terminalRef"] {
 
 .terminal-header {
   background-color: #374151;
-  padding: 0.75rem 1rem; /* 12px / 16px = 0.75rem, 16px / 16px = 1rem */
+  padding: 0.75rem 1rem;
+  /* 12px / 16px = 0.75rem, 16px / 16px = 1rem */
   display: flex;
   align-items: center;
 }
 
 .terminal-dots {
   display: flex;
-  gap: 0.5rem; /* 8px / 16px = 0.5rem */
+  gap: 0.5rem;
+  /* 8px / 16px = 0.5rem */
 }
 
 .terminal-dot {
-  width: 0.75rem; /* 12px / 16px = 0.75rem */
-  height: 0.75rem; /* 12px / 16px = 0.75rem */
+  width: 0.75rem;
+  /* 12px / 16px = 0.75rem */
+  height: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   border-radius: 50%;
 }
 
@@ -881,7 +1001,8 @@ div[ref="terminalRef"] {
 
 .terminal-title-text {
   color: #d1d5db;
-  font-size: 0.875rem; /* 14px / 16px = 0.875rem */
+  font-size: 0.875rem;
+  /* 14px / 16px = 0.875rem */
   font-weight: 500;
 }
 
@@ -889,10 +1010,13 @@ div[ref="terminalRef"] {
   background-color: #1f2937;
   color: #ffffff;
   font-family: 'Consolas', 'Courier New', 'Monaco', 'Menlo', 'Ubuntu Mono', 'monospace';
-  font-size: clamp(0.6875rem, 1vw, 1rem); /* 11px / 16px = 0.6875rem, 16px / 16px = 1rem */
+  font-size: clamp(0.6875rem, 1vw, 1rem);
+  /* 11px / 16px = 0.6875rem, 16px / 16px = 1rem */
   line-height: 1.5;
-  padding: 1rem; /* 16px / 16px = 1rem */
-  min-height: 12.5rem; /* 200px / 16px = 12.5rem */
+  padding: 1rem;
+  /* 16px / 16px = 1rem */
+  min-height: 12.5rem;
+  /* 200px / 16px = 12.5rem */
   white-space: pre-wrap;
   word-break: break-all;
   overflow-y: auto;
@@ -903,31 +1027,41 @@ div[ref="terminalRef"] {
 
 @media (min-width: 640px) {
   .terminal-content {
-    min-height: 18.75rem; /* 300px / 16px = 18.75rem */
-    font-size: clamp(0.75rem, 0.9vw, 1rem); /* 12px / 16px = 0.75rem, 16px / 16px = 1rem */
+    min-height: 18.75rem;
+    /* 300px / 16px = 18.75rem */
+    font-size: clamp(0.75rem, 0.9vw, 1rem);
+    /* 12px / 16px = 0.75rem, 16px / 16px = 1rem */
   }
+
   .result-output {
-    font-size: clamp(0.75rem, 0.9vw, 1rem); /* 12px / 16px = 0.75rem, 16px / 16px = 1rem */
+    font-size: clamp(0.75rem, 0.9vw, 1rem);
+    /* 12px / 16px = 0.75rem, 16px / 16px = 1rem */
   }
 }
 
 @media (min-width: 768px) {
   .terminal-content {
-    min-height: 28.125rem; /* 450px / 16px = 28.125rem */
-    font-size: clamp(0.8125rem, 0.8vw, 1rem); /* 13px / 16px = 0.8125rem, 16px / 16px = 1rem */
+    min-height: 28.125rem;
+    /* 450px / 16px = 28.125rem */
+    font-size: clamp(0.8125rem, 0.8vw, 1rem);
+    /* 13px / 16px = 0.8125rem, 16px / 16px = 1rem */
   }
+
   .result-output {
-    font-size: clamp(0.8125rem, 0.8vw, 1rem); /* 13px / 16px = 0.8125rem, 16px / 16px = 1rem */
+    font-size: clamp(0.8125rem, 0.8vw, 1rem);
+    /* 13px / 16px = 0.8125rem, 16px / 16px = 1rem */
   }
 }
 
-/* 命令类型颜色样式 */
+/* Command type color styles */
 .command-badge {
   display: inline-flex;
   align-items: center;
-  padding: 0.125rem 0.375rem; /* 2px / 16px = 0.125rem, 6px / 16px = 0.375rem */
+  padding: 0.125rem 0.375rem;
+  /* 2px / 16px = 0.125rem, 6px / 16px = 0.375rem */
   border-radius: 0.25rem;
-  font-size: 0.75rem; /* 12px / 16px = 0.75rem */
+  font-size: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   font-weight: 500;
 }
 

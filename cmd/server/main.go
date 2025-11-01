@@ -45,11 +45,11 @@ func main() {
 		maxOfflineDuration := time.Duration(cfg.Connection.DeleteOfflineAgents) * time.Second
 		log.Printf("Offline agent cleanup enabled: delete after %v offline", maxOfflineDuration)
 
-		// 启动定期清理（使用keepalive间隔，但频率降低10倍以减少资源消耗）
+		// Start periodic cleanup (using keepalive interval, reduced by 10x to save resources)
 		go func() {
 			checkInterval := time.Duration(cfg.Connection.Keepalive*10) * time.Second
 			if checkInterval < time.Minute {
-				checkInterval = time.Minute // 最少1分钟检查一次
+				checkInterval = time.Minute // Check at least once per minute
 			}
 
 			ticker := time.NewTicker(checkInterval)

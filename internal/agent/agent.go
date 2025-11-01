@@ -34,8 +34,8 @@ type Agent struct {
 	conn              *websocket.Conn
 	status            Status
 	lastCheck         time.Time
-	lastConnected     time.Time // 最后连接时间
-	firstSeen         time.Time // 首次连接时间
+	lastConnected     time.Time // Last connection time
+	firstSeen         time.Time // First connection time
 	statusLock        sync.RWMutex
 	availableCommands []config.CommandInfo
 	commandsLock      sync.RWMutex
@@ -143,8 +143,8 @@ func (m *Manager) handleAgentMessages(agent *Agent) {
 		agent.statusLock.Unlock()
 		log.Printf("Agent disconnected: %s (keeping in memory)", agent.Name)
 
-		// 触发一次清理检查（可选，在有配置的情况下）
-		// 这里不直接清理，而是让定期清理来处理，避免在断开时立即删除
+		// Trigger cleanup check (optional, when configured)
+		// Don't clean immediately, let periodic cleanup handle it to avoid instant deletion on disconnect
 	}()
 
 	for {
@@ -346,13 +346,13 @@ func (m *Manager) ExecuteCommandStreamingWithStopAndID(agentName, command, comma
 
 // buildAgentInfo creates a standardized agent info map
 func (m *Manager) buildAgentInfo(name string, agent *Agent) map[string]interface{} {
-	// 将后端状态映射为前端期望的格式：0=离线，1=在线
-	frontendStatus := 0 // 默认离线
+	// Map backend status to frontend expected format: 0=offline, 1=online
+	frontendStatus := 0 // Default offline
 	if agent.Status() == StatusConnected {
 		frontendStatus = 1
 	}
 
-	// 获取命令列表
+	// Get command list
 	agent.commandsLock.RLock()
 	commands := make([]string, len(agent.availableCommands))
 	for i, cmd := range agent.availableCommands {
@@ -360,18 +360,18 @@ func (m *Manager) buildAgentInfo(name string, agent *Agent) map[string]interface
 	}
 	agent.commandsLock.RUnlock()
 
-	// 计算离线时长（如果离线的话）
+	// Calculate offline duration (if offline)
 	var offlineDuration string
 	if agent.Status() != StatusConnected {
 		duration := time.Since(agent.lastConnected)
 		if duration < time.Minute {
-			offlineDuration = "刚刚离线"
+			offlineDuration = "Just offline"
 		} else if duration < time.Hour {
-			offlineDuration = fmt.Sprintf("%d分钟前离线", int(duration.Minutes()))
+			offlineDuration = fmt.Sprintf("Offline %d minutes ago", int(duration.Minutes()))
 		} else if duration < 24*time.Hour {
-			offlineDuration = fmt.Sprintf("%d小时前离线", int(duration.Hours()))
+			offlineDuration = fmt.Sprintf("Offline %d hours ago", int(duration.Hours()))
 		} else {
-			offlineDuration = fmt.Sprintf("%d天前离线", int(duration.Hours()/24))
+			offlineDuration = fmt.Sprintf("Offline %d days ago", int(duration.Hours()/24))
 		}
 	}
 
@@ -400,14 +400,14 @@ func (m *Manager) GetAgents() []map[string]interface{} {
 	m.agentsLock.RLock()
 	defer m.agentsLock.RUnlock()
 
-	// 先获取所有agent名称并排序
+	// Get all agent names and sort them
 	names := make([]string, 0, len(m.agents))
 	for name := range m.agents {
 		names = append(names, name)
 	}
-	sort.Strings(names) // 按字母A-Z排序
+	sort.Strings(names) // Sort alphabetically A-Z
 
-	// 按排序后的顺序构建agent列表
+	// Build agent list in sorted order
 	agents := make([]map[string]interface{}, 0, len(m.agents))
 	for _, name := range names {
 		if agent, exists := m.agents[name]; exists {
@@ -426,14 +426,14 @@ func (m *Manager) GetAgentGroups() []map[string]interface{} {
 	// Group agents by their group name
 	groups := make(map[string][]map[string]interface{})
 
-	// 先获取所有agent名称并排序
+	// Get all agent names and sort them
 	names := make([]string, 0, len(m.agents))
 	for name := range m.agents {
 		names = append(names, name)
 	}
-	sort.Strings(names) // 按字母A-Z排序
+	sort.Strings(names) // Sort alphabetically A-Z
 
-	// 按排序后的顺序分组
+	// Group in sorted order
 	for _, name := range names {
 		if agent, exists := m.agents[name]; exists {
 			groupName := agent.Group
@@ -449,14 +449,14 @@ func (m *Manager) GetAgentGroups() []map[string]interface{} {
 		}
 	}
 
-	// 对组名也进行排序
+	// Sort group names as well
 	groupNames := make([]string, 0, len(groups))
 	for groupName := range groups {
 		groupNames = append(groupNames, groupName)
 	}
 	sort.Strings(groupNames)
 
-	// 按排序后的组名顺序构建结果
+	// Build result in sorted group name order
 	result := make([]map[string]interface{}, 0, len(groups))
 	for _, groupName := range groupNames {
 		result = append(result, map[string]interface{}{

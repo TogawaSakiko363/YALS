@@ -8,7 +8,7 @@ import { CommandType } from './types/yals';
 import { Github } from 'lucide-react';
 import { config } from './custom';
 
-// 动态导入logo
+// Dynamically import logo
 const logo = new URL(config.logoPath, import.meta.url).href;
 
 function App() {
@@ -31,7 +31,7 @@ function App() {
     stopCommand
   } = useYalsClient();
 
-  // 组件挂载时尝试自动连接
+  // Attempt auto-connection when component mounts
   useEffect(() => {
     if (!isConnected && !isConnecting) {
       connect();
@@ -46,20 +46,20 @@ function App() {
     try {
       const commandId = `${command}-${target.trim()}-${selectedAgent}`;
       setCurrentCommandId(commandId);
-      setLatestOutput(null); // 清空之前的输出
+      setLatestOutput(null); // Clear previous output
       
       const res = await executeCommand(command, target);
-      // 设置最终输出
+      // Set final output
       setLatestOutput(res.output || '');
-      setCurrentCommandId(null); // 命令完成，清空当前命令ID
+      setCurrentCommandId(null); // Command completed, clear current command ID
       
-      // 延迟清理流式输出，确保Terminal组件能够显示最终结果
+      // Delay cleanup of streaming output to ensure Terminal component can display final result
       setTimeout(() => {
         clearStreamingOutput(commandId);
       }, 100);
     } catch (error: any) {
-      console.error('命令执行失败:', error);
-      setLatestOutput(error.message || '命令执行失败');
+      console.error('Command execution failed:', error);
+      setLatestOutput(error.message || 'Command execution failed');
       setCurrentCommandId(null);
     }
   };
@@ -67,9 +67,9 @@ function App() {
   const handleStopCommand = () => {
     if (currentCommandId) {
       stopCommand(currentCommandId);
-      // 不要立即清理状态，等待后端返回停止确认
+      // Don't immediately clean up state, wait for backend stop confirmation
       // setCurrentCommandId(null);
-      // setLatestOutput('命令已停止');
+      // setLatestOutput('Command stopped');
     }
   };
 

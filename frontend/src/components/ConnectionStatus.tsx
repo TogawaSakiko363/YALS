@@ -24,7 +24,7 @@ export const ConnectionStatus: React.FC<ConnectionStatusProps> = ({
       <span className={`connection-status-text ${
         isConnected ? 'connected' : isConnecting ? 'connecting' : 'disconnected'
       }`}>
-        {isConnecting ? '连接中...' : isConnected ? '已连接' : '未连接'}
+        {isConnecting ? 'Connecting...' : isConnected ? 'Connected' : 'Disconnected'}
       </span>
     </div>
   );

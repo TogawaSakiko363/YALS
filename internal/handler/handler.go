@@ -25,9 +25,9 @@ type Handler struct {
 	clientsLock    sync.RWMutex
 	pingInterval   time.Duration
 	pongWait       time.Duration
-	activeCommands map[string]chan bool // 用于停止命令的通道
+	activeCommands map[string]chan bool // Channel for stopping commands
 	commandsLock   sync.RWMutex
-	webDir         string // 前端文件目录
+	webDir         string // Frontend files directory
 }
 
 // CommandRequest represents a command request from the client
@@ -208,25 +208,25 @@ func (h *Handler) handleAgentWebSocket(w http.ResponseWriter, r *http.Request) {
 	h.agentManager.HandleAgentConnection(conn)
 }
 
-// getRealIP 获取客户端真实IP地址，支持反向代理
+// getRealIP gets the real client IP address, supports reverse proxy
 func (h *Handler) getRealIP(r *http.Request) string {
-	// 优先从 X-Real-IP 获取
+	// First try X-Real-IP header
 	ip := r.Header.Get("X-Real-IP")
 	if ip != "" {
 		return ip
 	}
 
-	// 其次从 X-Forwarded-For 获取（取第一个IP）
+	// Then try X-Forwarded-For header (take first IP)
 	forwarded := r.Header.Get("X-Forwarded-For")
 	if forwarded != "" {
-		// X-Forwarded-For 可能包含多个IP，取第一个
+		// X-Forwarded-For may contain multiple IPs, take the first one
 		if idx := strings.Index(forwarded, ","); idx != -1 {
 			return strings.TrimSpace(forwarded[:idx])
 		}
 		return strings.TrimSpace(forwarded)
 	}
 
-	// 最后使用 RemoteAddr
+	// Finally use RemoteAddr
 	return r.RemoteAddr
 }
 
@@ -323,7 +323,7 @@ func (h *Handler) handleCommand(conn *websocket.Conn, req CommandRequest) {
 
 	for _, a := range agents {
 		if a["name"] == req.Agent {
-			// 检查代理状态：前端格式中1表示在线，0表示离线
+			// Check agent status: 1=online, 0=offline in frontend format
 			if status, ok := a["status"].(int); !ok || status != 1 {
 				resp.Error = "Agent is not connected"
 				h.sendResponse(conn, resp)
@@ -345,11 +345,11 @@ func (h *Handler) handleCommand(conn *websocket.Conn, req CommandRequest) {
 		return
 	}
 
-	// 创建停止通道
+	// Create stop channel
 	commandID := h.generateCommandID(req.Command, req.Target, req.Agent)
 	stopChan := make(chan bool, 1)
 
-	// 记录执行命令的日志
+	// Log command execution
 	log.Printf("Sent run signal for command: %s", commandID)
 
 	h.setActiveCommand(commandID, stopChan)
@@ -379,7 +379,7 @@ func (h *Handler) handleCommand(conn *websocket.Conn, req CommandRequest) {
 		}
 	})
 
-	// 清理停止通道
+	// Clean up stop channel
 	h.removeActiveCommand(commandID)
 
 	if err != nil {
@@ -520,7 +520,7 @@ func (h *Handler) sendAgentStatus(conn *websocket.Conn) {
 		"groups": groups,
 	}
 
-	// 直接发送，不需要客户端锁定检查（用于初始连接）
+	// Send directly without client lock check (for initial connection)
 	data, err := json.Marshal(update)
 	if err != nil {
 		log.Printf("Failed to marshal agent status: %v", err)
@@ -604,7 +604,7 @@ func (h *Handler) stopActiveCommand(commandID string) bool {
 	defer h.commandsLock.Unlock()
 
 	if stopChan, exists := h.activeCommands[commandID]; exists {
-		close(stopChan) // 发送停止信号
+		close(stopChan) // Send stop signal
 		delete(h.activeCommands, commandID)
 		return true
 	}

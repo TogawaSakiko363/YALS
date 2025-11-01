@@ -35,7 +35,7 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({
   const [target, setTarget] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
 
-  // 将commands map转换为CommandOption数组
+  // Convert commands map to CommandOption array
   const commandOptions: CommandOption[] = Object.entries(commands || {}).map(([key, description]) => ({
     value: key as CommandType,
     label: key.toUpperCase(),
@@ -57,7 +57,7 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({
     try {
       await onExecuteCommand(selectedCommand, target.trim());
     } catch (error) {
-      console.error('命令执行失败:', error);
+      console.error('Command execution failed:', error);
     } finally {
       setIsExecuting(false);
     }
@@ -76,29 +76,29 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({
 
   return (
     <div className="command-panel-container">
-      {/* 网络测试容器 */}
+      {/* Network test container */}
       <div className="command-test-container">
         <div className="panel-title">
           <Terminal className="panel-title-icon" />
-          <h2 className="panel-title-text">网络测试</h2>
+          <h2 className="panel-title-text">Network Test</h2>
         </div>
 
         <div className="space-y-4">
           {!hasCommands && (
             <div className="text-center py-8 text-gray-500">
               <Terminal className="w-12 h-12 mx-auto mb-2 text-gray-300" />
-              <p>暂无可用命令</p>
+              <p>No commands available</p>
             </div>
           )}
 
           {hasCommands && (
             <div className="space-y-3">
-              {/* 大屏幕布局：水平排列 */}
+              {/* Large screen layout: horizontal arrangement */}
               <div className="command-actions-desktop">
-                {/* 命令选择下拉菜单 */}
+                {/* Command selection dropdown */}
                 <div className="command-select-container">
                   <label className="command-label">
-                    命令类型
+                    Command Type
                   </label>
                   <select
                     value={selectedCommand}
@@ -114,10 +114,10 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({
                   </select>
                 </div>
 
-                {/* 目标输入 - 占据剩余空间 */}
+                {/* Target input - takes remaining space */}
                 <div className="command-target-container">
                   <label htmlFor="target" className="command-label">
-                    目标地址
+                    Target Address
                   </label>
                   <input
                     id="target"
@@ -131,7 +131,7 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({
                   />
                 </div>
 
-                {/* 执行/停止按钮 */}
+                {/* Execute/Stop button */}
                 <div className="command-button-container">
                   <button
                     onClick={() => {
@@ -156,12 +156,12 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({
                 </div>
               </div>
               
-              {/* 小屏幕布局：垂直排列 */}
+              {/* Small screen layout: vertical arrangement */}
               <div className="command-actions-mobile">
-                {/* 命令选择下拉菜单 */}
+                {/* Command selection dropdown */}
                 <div>
                   <label className="command-label">
-                    命令类型
+                    Command Type
                   </label>
                   <select
                     value={selectedCommand}
@@ -177,10 +177,10 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({
                   </select>
                 </div>
 
-                {/* 目标输入 */}
+                {/* Target input */}
                 <div>
                   <label htmlFor="target" className="command-label">
-                    目标地址
+                    Target Address
                   </label>
                   <input
                     id="target"
@@ -194,7 +194,7 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({
                   />
                 </div>
 
-                {/* 执行/停止按钮 */}
+                {/* Execute/Stop button */}
                 <div>
                   <button
                     onClick={() => {
@@ -221,20 +221,20 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({
             </div>
           )}
 
-          {/* 状态提示 */}
+          {/* Status indicator */}
           <div className="command-status">
             {!isConnected ? (
-              <span className="command-status error">请先连接服务器</span>
+              <span className="command-status error">Please connect to server first</span>
             ) : !selectedAgent ? (
-              <span className="command-status warning">请选择节点</span>
+              <span className="command-status warning">Please select a node</span>
             ) : (
-              <span>节点: <strong>{selectedAgent}</strong>   命令功能: {commandOptions.find(cmd => cmd.value === selectedCommand)?.description || '未知'}</span>
+              <span>Node: <strong>{selectedAgent}</strong>   Command: {commandOptions.find(cmd => cmd.value === selectedCommand)?.description || 'Unknown'}</span>
             )}
           </div>
         </div>
       </div>
 
-      {/* 直接显示终端容器，移除外层的白色卡片容器 */}
+      {/* Display terminal container directly, remove outer white card container */}
       <div className="terminal-container">
         {/* Terminal Header with macOS style dots */}
         <div className="terminal-header">
@@ -251,29 +251,29 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({
         {/* Terminal Content */}
         <div className="terminal-content">
           {(() => {
-            // 获取当前命令的输出
+            // Get current command output
             const streamingOutput = currentCommandId ? streamingOutputs?.get(currentCommandId) : undefined;
             const isStreaming = currentCommandId ? activeCommands.has(currentCommandId) : false;
             
-            // 优先显示流式输出，如果没有流式输出则显示最终输出
+            // Prioritize streaming output, show final output if no streaming output
             let displayOutput: string | null | undefined;
             if (isStreaming && streamingOutput !== undefined && streamingOutput !== '') {
               displayOutput = streamingOutput;
             } else if (latestOutput !== null && latestOutput !== undefined && latestOutput !== '') {
               displayOutput = latestOutput;
             } else if (streamingOutput !== undefined && streamingOutput !== '') {
-              // 命令完成但没有最终输出时，显示流式输出的内容
+              // When command completes but no final output, show streaming output content
               displayOutput = streamingOutput;
             } else {
               displayOutput = null;
             }
             
             if (displayOutput === null || displayOutput === undefined) {
-              return '请在上方选择命令类型和目标地址，然后点击"Run"开始测试';
+              return 'Please select command type and target address above, then click "Run" to start testing';
             } else if (displayOutput && displayOutput.length > 0) {
               return displayOutput;
             } else {
-              return '命令执行完成，无输出内容';
+              return 'Command execution completed with no output';
             }
           })()}
         </div>

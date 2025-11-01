@@ -95,7 +95,7 @@ type AgentConfig struct {
 	} `yaml:"agent"`
 
 	Commands map[string]CommandTemplate `yaml:"commands"`
-	// 内部使用的有序命令列表
+	// Internal ordered command list
 	orderedCommands []string
 }
 
@@ -117,15 +117,15 @@ func LoadAgentConfig(filename string) (*AgentConfig, error) {
 		return nil, fmt.Errorf("error parsing agent config file: %w", err)
 	}
 
-	// 解析YAML以获取命令的原始顺序
+	// Parse YAML to get original command order
 	var rawConfig map[string]interface{}
 	if err := yaml.Unmarshal(data, &rawConfig); err == nil {
 		if commands, ok := rawConfig["commands"].(map[string]interface{}); ok {
-			// 从YAML中提取命令顺序
+			// Extract command order from YAML
 			config.orderedCommands = make([]string, 0, len(commands))
 
-			// 由于Go的map是无序的，我们需要从原始YAML数据中提取顺序
-			// 这里使用一个简单的方法：按照在配置文件中出现的顺序
+			// Since Go maps are unordered, we need to extract order from raw YAML data
+			// Use a simple method: order as they appear in config file
 			lines := strings.Split(string(data), "\n")
 			inCommandsSection := false
 
@@ -137,18 +137,18 @@ func LoadAgentConfig(filename string) (*AgentConfig, error) {
 				}
 
 				if inCommandsSection {
-					// 如果遇到新的顶级配置项，退出commands部分
+					// If encountering new top-level config item, exit commands section
 					if len(trimmed) > 0 && !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, " ") && !strings.HasPrefix(trimmed, "\t") {
 						break
 					}
 
-					// 检查是否是命令定义行
+					// Check if it's a command definition line
 					if strings.Contains(trimmed, ":") && !strings.HasPrefix(trimmed, "#") && (strings.HasPrefix(trimmed, " ") || strings.HasPrefix(trimmed, "\t")) {
 						parts := strings.SplitN(trimmed, ":", 2)
 						if len(parts) > 0 {
 							cmdName := strings.TrimSpace(parts[0])
 							if cmdName != "" && cmdName != "template" && cmdName != "description" {
-								// 检查这个命令是否已经在列表中
+								// Check if this command is already in the list
 								if !contains(config.orderedCommands, cmdName) {
 									config.orderedCommands = append(config.orderedCommands, cmdName)
 								}
@@ -160,7 +160,7 @@ func LoadAgentConfig(filename string) (*AgentConfig, error) {
 		}
 	}
 
-	// 如果没有解析到顺序，使用默认顺序
+	// If no order parsed, use default order
 	if len(config.orderedCommands) == 0 {
 		for cmdName := range config.Commands {
 			config.orderedCommands = append(config.orderedCommands, cmdName)
@@ -184,7 +184,7 @@ func contains(slice []string, item string) bool {
 func (c *AgentConfig) GetAvailableCommands() []CommandInfo {
 	commands := make([]CommandInfo, 0, len(c.orderedCommands))
 
-	// 按照配置文件中的顺序返回命令
+	// Return commands in config file order
 	for _, name := range c.orderedCommands {
 		if template, exists := c.Commands[name]; exists {
 			commands = append(commands, CommandInfo{

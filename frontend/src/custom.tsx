@@ -1,20 +1,20 @@
-// 网页自定义配置文件
+// Web customization config file
 export const config = {
-  // 网页标题
+  // Page title
   pageTitle: 'Example Networks - Looking Glass',
   
-  // 右侧页脚文字内容
+  // Footer right text content
   footerRightText: '© 2025 Example Networks, LLC.',
   
-  // 网页icon图标路径，请把图像文件放到public/images目录下
+  // Web icon path, please put image files in public/images directory
   faviconPath: '/images/favicon.png',
   
-  // 网页左上角logo图标路径，请把图像文件放到public/images目录下
+  // Web top-left logo path, please put image files in public/images directory
   logoPath: '/images/logo.png',
   
-  // 网页背景颜色
+  // Web background color
   backgroundColor: '#f5f4f1'
 };
 
-// 导出类型定义，方便TypeScript类型检查
+// Export type definition for TypeScript type checking
 export type ConfigType = typeof config;

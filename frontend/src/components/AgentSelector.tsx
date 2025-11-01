@@ -13,7 +13,7 @@ const AgentDetails: React.FC<AgentDetailsProps> = ({ agent, isExpanded }) => {
   return (
     <div className="agent-details">
       <p className="agent-details-text">
-        <span className="font-medium">测试IP:</span> {agent.details.test_ip}
+        <span className="font-medium">Test IP:</span> {agent.details.test_ip}
       </p>
       <p className="agent-details-text">
         {agent.details.description}
@@ -87,10 +87,10 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
   const [selectedGroup, setSelectedGroup] = useState('all');
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
 
-  // 从后端groups数据中提取分组配置（支持有序数组格式）
+  // Extract group configuration from backend groups data (supports ordered array format)
   const groupConfig = React.useMemo(() => {
     if (Array.isArray(groups)) {
-      // 新格式：有序数组
+      // New format: ordered array
       return groups
         .filter(group => Array.isArray(group.agents))
         .map(group => ({
@@ -98,7 +98,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
           agents: group.agents.map(agent => agent.name)
         }));
     } else {
-      // 旧格式：对象
+      // Old format: object
       return Object.entries(groups)
         .filter(([, agents]) => Array.isArray(agents))
         .map(([groupName, agents]) => ({
@@ -108,7 +108,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
     }
   }, [groups]);
 
-  // 根据选择的分组过滤agents
+  // Filter agents based on selected group
   const filteredAgents = React.useMemo(() => {
     if (selectedGroup === 'all') {
       if (Array.isArray(groups)) {
@@ -136,8 +136,8 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Server className="w-4 h-4 text-gray-600" />
-          <h2 className="text-base font-semibold text-gray-900">节点列表</h2>
-          <span className="text-xs text-gray-500">({onlineAgents.length} 在线)</span>
+          <h2 className="text-base font-semibold text-gray-900">Node List</h2>
+          <span className="text-xs text-gray-500">({onlineAgents.length} online)</span>
         </div>
         <select
           value={selectedGroup}
@@ -153,7 +153,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
             backgroundSize: '1.25em 1.25em'
           }}
         >
-          <option value="all" className="font-medium">全部节点</option>
+          <option value="all" className="font-medium">All Nodes</option>
           {groupConfig.map(group => (
             <option key={group.name} value={group.name} className="font-medium">
               {group.name} ({group.agents.length})
@@ -165,7 +165,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
       {filteredAgents.length === 0 ? (
         <div className="text-center py-6 text-gray-500">
           <Server className="w-10 h-10 mx-auto mb-2 text-gray-300" />
-          <p className="text-sm">暂无节点</p>
+          <p className="text-sm">No nodes available</p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -187,7 +187,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
           {offlineAgents.length > 0 && (
             <>
               <div className="border-t border-gray-200 pt-2 mt-4">
-                <h3 className="text-xs font-medium text-gray-500 mb-2">离线</h3>
+                <h3 className="text-xs font-medium text-gray-500 mb-2">Offline</h3>
               </div>
               {offlineAgents.map((agent) => (
                 <AgentItem

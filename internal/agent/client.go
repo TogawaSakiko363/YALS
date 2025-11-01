@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -24,8 +25,8 @@ type Client struct {
 // CommandRequest represents a command request from the server
 type CommandRequest struct {
 	Type        string `json:"type"`
-	CommandName string `json:"command_name"` // 改为命令名称而不是完整命令
-	Target      string `json:"target"`       // 目标参数（如IP地址）
+	CommandName string `json:"command_name"` // Command name instead of full command
+	Target      string `json:"target"`       // Target parameter (e.g., IP address)
 	CommandID   string `json:"command_id"`
 }
 
@@ -60,7 +61,7 @@ func NewClientWithConfig(agentConfig *config.AgentConfig) *Client {
 
 // ConnectToServer connects to the server and handles the WebSocket connection
 func (c *Client) ConnectToServer() error {
-	// 根据配置选择协议
+	// Select protocol based on configuration
 	protocol := "ws"
 	if c.config.Server.TLS {
 		protocol = "wss"
@@ -221,7 +222,10 @@ func (c *Client) executeCommand(conn *websocket.Conn, req CommandRequest) {
 			c.sendOutput(conn, req.CommandID, scanner.Text(), false)
 		}
 		if err := scanner.Err(); err != nil {
-			c.sendOutput(conn, req.CommandID, fmt.Sprintf("Error reading stdout: %v", err), true)
+			// Ignore pipe closed errors, this is normal command completion behavior
+			if !isClosedPipeError(err) {
+				c.sendOutput(conn, req.CommandID, fmt.Sprintf("Error reading stdout: %v", err), true)
+			}
 		}
 	}()
 
@@ -233,19 +237,34 @@ func (c *Client) executeCommand(conn *websocket.Conn, req CommandRequest) {
 			c.sendOutput(conn, req.CommandID, scanner.Text(), true)
 		}
 		if err := scanner.Err(); err != nil {
-			c.sendOutput(conn, req.CommandID, fmt.Sprintf("Error reading stderr: %v", err), true)
+			// Ignore pipe closed errors, this is normal command completion behavior
+			if !isClosedPipeError(err) {
+				c.sendOutput(conn, req.CommandID, fmt.Sprintf("Error reading stderr: %v", err), true)
+			}
 		}
 	}()
 
 	// Wait for command to complete
 	go func() {
-		done <- cmd.Wait()
+		err := cmd.Wait()
+		done <- err
+
+		// Give reading goroutines time to complete after command ends
+		// Then close pipes to avoid reading from closed pipes
+		time.Sleep(100 * time.Millisecond)
+		stdout.Close()
+		stderr.Close()
 	}()
 
 	// Wait for completion and all output to be read
-	<-done
+	cmdErr := <-done
 	<-outputDone
 	<-outputDone
+
+	// Send error message if command execution failed
+	if cmdErr != nil {
+		c.sendOutput(conn, req.CommandID, fmt.Sprintf("Command failed: %v", cmdErr), true)
+	}
 
 	// Send completion message
 	c.sendCompletion(conn, req.CommandID)
@@ -293,4 +312,18 @@ func (c *Client) sendError(conn *websocket.Conn, commandID, errorMsg string) {
 // sendCompletion sends a completion message to the server
 func (c *Client) sendCompletion(conn *websocket.Conn, commandID string) {
 	c.sendCommandResponse(conn, commandID, "", "", true, false)
+}
+
+// isClosedPipeError checks if the error is a closed pipe error
+func isClosedPipeError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check common pipe closed error messages
+	errStr := err.Error()
+	return strings.Contains(errStr, "file already closed") ||
+		strings.Contains(errStr, "broken pipe") ||
+		strings.Contains(errStr, "use of closed file") ||
+		err == os.ErrClosed
 }

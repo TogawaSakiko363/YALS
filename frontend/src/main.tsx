@@ -4,10 +4,10 @@ import App from './App.tsx';
 import './index.css';
 import { config } from './custom';
 
-// 动态设置网页标题
+// Dynamically set page title
 document.title = config.pageTitle;
 
-// 动态设置favicon
+// Dynamically set favicon
 const favicon = document.querySelector('link[rel="icon"]');
 if (favicon) {
   favicon.setAttribute('href', new URL(config.faviconPath, import.meta.url).href);

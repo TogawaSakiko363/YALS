@@ -22,7 +22,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       return {};
     }
   });
-  // 本地存储工具函数
+  // Local storage utility functions
   const getLocalStorage = (key: string): string | null => {
     try {
       return localStorage.getItem(key);
@@ -35,7 +35,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     try {
       localStorage.setItem(key, value);
     } catch (error) {
-      console.warn('无法保存到本地存储:', error);
+      console.warn('Unable to save to local storage:', error);
     }
   };
 
@@ -66,13 +66,13 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       
       const delay = Math.min(30000, reconnectDelay * Math.pow(1.5, reconnectAttemptsRef.current - 1));
       
-      console.log(`YALS: 尝试在${delay}毫秒后重新连接 (尝试 ${reconnectAttemptsRef.current}/${maxReconnectAttempts})`);
+      console.log(`YALS: Attempting reconnection in ${delay}ms (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})`);
       
       reconnectTimeoutRef.current = setTimeout(() => {
         connect();
       }, delay);
     } else {
-      console.error('YALS: 达到最大重连尝试次数，停止重连');
+      console.error('YALS: Maximum reconnection attempts reached, stopping reconnection');
     }
   }, [maxReconnectAttempts, reconnectDelay]);
 
@@ -84,18 +84,18 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
           const groupsData = message.groups || {};
           setGroups(groupsData);
           
-          // 将分组数据转换为agents列表用于向后兼容
+          // Convert group data to agents list for backward compatibility
           const allAgents: Agent[] = [];
           
           if (Array.isArray(groupsData)) {
-            // 新格式：有序数组
+            // New format: ordered array
             groupsData.forEach(group => {
               if (Array.isArray(group.agents)) {
                 allAgents.push(...group.agents);
               }
             });
           } else {
-            // 旧格式：对象
+            // Old format: object
             Object.values(groupsData).forEach((value: unknown) => {
               if (Array.isArray(value)) {
                 const groupAgents = value as Agent[];
@@ -106,12 +106,12 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
           
           setAgents(allAgents);
           
-          // 如果没有选择节点且有可用节点，选择第一个在线的节点
+          // If no node selected and nodes available, select first online node
           if (!selectedAgent && allAgents.length > 0) {
             const onlineAgent = allAgents.find((agent: Agent) => agent.status === 1);
             if (onlineAgent) {
               setSelectedAgent(onlineAgent.name);
-              // 获取该agent的commands
+              // Get commands for this agent
               getAgentCommands(onlineAgent.name);
             }
           }
@@ -124,7 +124,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
         const commandsArray = message.commands || [];
         const commandsMap: Record<string, string> = {};
         
-        // 将数组转换为对象，保持服务器返回的顺序
+        // Convert array to object, maintaining server-returned order
         commandsArray.forEach((cmd: { name: string; description: string }) => {
           commandsMap[cmd.name] = cmd.description;
         });
@@ -158,7 +158,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
           });
         }
       } else if (message.command) {
-        // 处理命令响应
+        // Handle command response
         const commandId = `${message.command}-${message.target}-${message.agent}`;
         
         setActiveCommands(prev => {
@@ -186,7 +186,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
             updated[existingIndex] = { ...updated[existingIndex], response };
             updatedHistory = updated;
           } else {
-            // 如果是新命令，添加到历史记录
+            // If new command, add to history
             const newHistoryItem: CommandHistory = {
               id: commandId,
               command: message.command,
@@ -198,17 +198,17 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
             updatedHistory = [newHistoryItem, ...prev];
           }
           
-          // 限制历史记录数量，避免过大
+          // Limit history size to avoid excessive growth
           const limitedHistory = updatedHistory.slice(0, 100);
           
-          // 立即保存到本地存储
+          // Save to local storage immediately
           setLocalStorage('yals_command_history', JSON.stringify(limitedHistory));
           
           return limitedHistory;
         });
       }
     } catch (error) {
-      console.error('YALS: 解析消息错误:', error);
+      console.error('YALS: Message parsing error:', error);
     }
   }, [selectedAgent]);
 
@@ -227,7 +227,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
         const socket = new WebSocket(wsUrl);
         
         socket.onopen = () => {
-          console.log('YALS: WebSocket连接已建立');
+          console.log('YALS: WebSocket connection established');
           socketRef.current = socket;
           setIsConnected(true);
           setIsConnecting(false);
@@ -238,17 +238,17 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
             reconnectTimeoutRef.current = null;
           }
           
-          // 获取应用配置
+          // Get application config
           const configRequest = JSON.stringify({ type: 'get_config' });
           socket.send(configRequest);
           
-          // 不再自动获取全局commands，而是在选择agent时获取该agent的commands
+          // No longer auto-fetch global commands, get agent-specific commands when selecting agent
           
           resolve();
         };
         
         socket.onclose = () => {
-          console.log('YALS: WebSocket连接已关闭');
+          console.log('YALS: WebSocket connection closed');
           setIsConnected(false);
           setIsConnecting(false);
           socketRef.current = null;
@@ -257,7 +257,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
         };
         
         socket.onerror = (error) => {
-          console.error('YALS: WebSocket错误:', error);
+          console.error('YALS: WebSocket error:', error);
           setIsConnecting(false);
           reject(error);
         };
@@ -266,7 +266,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
           handleMessage(event.data);
         };
       } catch (error) {
-        console.error('YALS: 连接错误:', error);
+        console.error('YALS: Connection error:', error);
         setIsConnecting(false);
         reject(error);
       }
@@ -286,36 +286,36 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     
     setIsConnected(false);
     setIsConnecting(false);
-    reconnectAttemptsRef.current = maxReconnectAttempts; // 防止自动重连
+    reconnectAttemptsRef.current = maxReconnectAttempts; // Prevent auto-reconnection
   }, [maxReconnectAttempts]);
 
   const executeCommand = useCallback(async (command: CommandType, target: string): Promise<CommandResponse> => {
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket未连接');
+      throw new Error('WebSocket not connected');
     }
     
     if (!selectedAgent) {
-      throw new Error('未选择节点');
+      throw new Error('No node selected');
     }
     
     if (!target || target.trim() === '') {
-      throw new Error('目标不能为空');
+      throw new Error('Target cannot be empty');
     }
 
     const trimmedTarget = target.trim();
     const commandId = `${command}-${trimmedTarget}-${selectedAgent}`;
     
-    // 添加到活动命令集合
+    // Add to active commands set
     setActiveCommands(prev => new Set(prev).add(commandId));
     
-    // 清理之前的流式输出
+    // Clear previous streaming output
     setStreamingOutputs(prev => {
       const newMap = new Map(prev);
       newMap.delete(commandId);
       return newMap;
     });
     
-    // 添加到历史记录
+    // Add to history
     const historyEntry: CommandHistory = {
       id: commandId,
       command,
@@ -334,7 +334,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     };
 
     return new Promise((resolve, reject) => {
-      let accumulatedOutput = ''; // 在Promise内部累积输出
+      let accumulatedOutput = ''; // Accumulate output within Promise
       
       const timeoutId = setTimeout(() => {
         setActiveCommands(prev => {
@@ -347,8 +347,8 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
           newMap.delete(commandId);
           return newMap;
         });
-        reject(new Error('命令执行超时'));
-      }, 120000); // 120秒超时，给流式输出更多时间
+        reject(new Error('Command execution timeout'));
+      }, 120000); // 120 second timeout, allow more time for streaming output
 
       const messageHandler = (event: MessageEvent) => {
         try {
@@ -361,7 +361,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
               response.target === trimmedTarget &&
               !response.is_complete) {
             
-            // 累积输出
+            // Accumulate output
             if (response.output) {
               accumulatedOutput += (accumulatedOutput ? '\n' : '') + response.output;
             }
@@ -385,7 +385,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
               command: response.command,
               target: response.target,
               agent: response.agent,
-              output: accumulatedOutput, // 使用累积的输出
+              output: accumulatedOutput, // Use accumulated output
               error: response.error,
               timestamp: Date.now()
             };
@@ -395,11 +395,11 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
               const existingIndex = prev.findIndex(h => h.id === commandId);
               if (existingIndex >= 0) {
                 const updated = [...prev];
-                // 检查是否是停止状态
+                // Check if it's a stopped state
                 const finalResponse = {
                   ...commandResponse,
-                  // 如果错误信息是"已取消"，标记为取消状态
-                  output: commandResponse.error === '已取消' ? 
+                  // If error message is "cancelled", mark as cancelled state
+                  output: commandResponse.error === 'Cancelled' ? 
                     (accumulatedOutput + '\n*** Stopped ***') : 
                     commandResponse.output
                 };
@@ -419,7 +419,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
             if (response.success) {
               resolve(commandResponse);
             } else {
-              reject(new Error(response.error || '命令执行失败'));
+              reject(new Error(response.error || 'Command execution failed'));
             }
           }
           
@@ -445,11 +445,11 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
             if (response.success) {
               resolve(commandResponse);
             } else {
-              reject(new Error(response.error || '命令执行失败'));
+              reject(new Error(response.error || 'Command execution failed'));
             }
           }
         } catch (error) {
-          // 忽略解析错误
+          // Ignore parsing errors
         }
       };
 
@@ -489,7 +489,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       return;
     }
 
-    // 发送停止命令到后端
+    // Send stop command to backend
     const stopRequest = {
       type: 'stop_command',
       command_id: commandId
@@ -497,10 +497,10 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
 
     socketRef.current.send(JSON.stringify(stopRequest));
     
-    // 注意：不要立即清理状态，等待后端返回停止确认
+    // Note: Don't immediately clean up state, wait for backend stop confirmation
   }, []);
 
-  // 当历史更新时写入 Cookie（4KB 限制，历史过大可能被截断）
+  // Write to Cookie when history updates (4KB limit, large history may be truncated)
   useEffect(() => {
     try {
       document.cookie = `yals_command_history=${encodeURIComponent(JSON.stringify(commandHistory))}`;
@@ -518,7 +518,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     if (agentName) {
       getAgentCommands(agentName);
     } else {
-      // 如果没有选择agent，清空commands
+      // If no agent selected, clear commands
       setCommands({});
     }
   }, [getAgentCommands]);
