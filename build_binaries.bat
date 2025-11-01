@@ -51,11 +51,3 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo Build completed successfully!
-echo Built binaries:
-echo   Windows x64 Server: bin\windows_amd64\yals_server.exe
-echo   Linux x64 Server:   bin\linux_amd64\yals_server
-echo   Linux x64 Agent:    bin\linux_amd64\yals_agent
-echo.
-echo Usage:
-echo   Server: ./yals_server -config config.yaml
-echo   Agent:  ./yals_agent -c agent.yaml
