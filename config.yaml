@@ -2,15 +2,17 @@
 
 # Application settings
 app:
-  version: "3.0.0-rc4"
+  version: "3.0.0-rc6"
 
 # Server settings
 server:
   host: "0.0.0.0"
-  port: 8080
+  port: 443
   password: "your_password"
   log_level: "info"  # debug, info, warn, error
-# We haven't inbuilt TLS in the server yet, please use a reverse proxy for HTTPS
+  tls: true # Set to true to enable HTTPS/TLS
+  tls_cert_file: "./cert.pem"  # Path to TLS certificate file
+  tls_key_file: "./key.pem"    # Path to TLS private key file
 
 # WebSocket settings
 websocket:
