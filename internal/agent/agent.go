@@ -2,13 +2,13 @@ package agent
 
 import (
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"YALS/internal/config"
+	"YALS/internal/logger"
 	"YALS/internal/validator"
 
 	"github.com/gorilla/websocket"
@@ -81,12 +81,12 @@ func (m *Manager) HandleAgentConnection(conn *websocket.Conn) {
 	}
 
 	if err := conn.ReadJSON(&handshake); err != nil {
-		log.Printf("Failed to read agent handshake: %v", err)
+		logger.Errorf("Failed to read agent handshake: %v", err)
 		return
 	}
 
 	if handshake.Type != "handshake" {
-		log.Printf("Invalid handshake type: %s", handshake.Type)
+		logger.Warnf("Invalid handshake type: %s", handshake.Type)
 		return
 	}
 
@@ -120,7 +120,7 @@ func (m *Manager) HandleAgentConnection(conn *websocket.Conn) {
 	}
 	m.agentsLock.Unlock()
 
-	log.Printf("Agent registered: %s (Group: %s)", handshake.Name, handshake.Group)
+	logger.Infof("Agent registered: %s (Group: %s)", handshake.Name, handshake.Group)
 
 	// Send acknowledgment
 	ack := map[string]any{
@@ -128,7 +128,7 @@ func (m *Manager) HandleAgentConnection(conn *websocket.Conn) {
 		"message": "Agent registered successfully",
 	}
 	if err := conn.WriteJSON(ack); err != nil {
-		log.Printf("Failed to send handshake ack: %v", err)
+		logger.Errorf("Failed to send handshake ack: %v", err)
 		return
 	}
 
@@ -144,7 +144,7 @@ func (m *Manager) handleAgentMessages(agent *Agent) {
 		agent.status = StatusDisconnected
 		agent.conn = nil
 		agent.statusLock.Unlock()
-		log.Printf("Agent disconnected: %s (keeping in memory)", agent.Name)
+		logger.Infof("Agent disconnected: %s (keeping in memory)", agent.Name)
 
 		// Trigger cleanup check (optional, when configured)
 		// Don't clean immediately, let periodic cleanup handle it to avoid instant deletion on disconnect
@@ -154,11 +154,11 @@ func (m *Manager) handleAgentMessages(agent *Agent) {
 		var message map[string]any
 		if err := agent.conn.ReadJSON(&message); err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("Agent %s unexpected WebSocket close: %v", agent.Name, err)
+				logger.Errorf("Agent %s unexpected WebSocket close: %v", agent.Name, err)
 			} else if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				log.Printf("Agent %s closed connection normally", agent.Name)
+				logger.Infof("Agent %s closed connection normally", agent.Name)
 			} else {
-				log.Printf("Agent %s connection error: %v", agent.Name, err)
+				logger.Errorf("Agent %s connection error: %v", agent.Name, err)
 			}
 			break
 		}
@@ -172,7 +172,7 @@ func (m *Manager) handleAgentMessages(agent *Agent) {
 		case "command_output":
 			m.handleCommandOutput(message)
 		default:
-			log.Printf("Unknown message type from agent %s: %s", agent.Name, msgType)
+			logger.Warnf("Unknown message type from agent %s: %s", agent.Name, msgType)
 		}
 	}
 }
@@ -565,7 +565,7 @@ func (m *Manager) CleanupOfflineAgents(maxOfflineDuration time.Duration) int {
 
 	for _, name := range toDelete {
 		delete(m.agents, name)
-		log.Printf("Cleaned up offline agent: %s", name)
+		logger.Infof("Cleaned up offline agent: %s", name)
 	}
 
 	return len(toDelete)

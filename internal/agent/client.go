@@ -2,9 +2,9 @@ package agent
 
 import (
 	"YALS/internal/config"
+	"YALS/internal/logger"
 	"bufio"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -85,7 +85,7 @@ func (c *Client) ConnectToServer() error {
 		WriteBufferSize:  65536, // 64KB write buffer
 	}
 
-	log.Printf("Connecting to server at %s", serverURL)
+	logger.Infof("Connecting to server at %s", serverURL)
 
 	// Connect to server
 	conn, _, err := dialer.Dial(serverURL, headers)
@@ -94,11 +94,11 @@ func (c *Client) ConnectToServer() error {
 	}
 	defer conn.Close()
 
-	log.Printf("Connected to server successfully")
+	logger.Infof("Connected to server successfully")
 
 	// Set up ping/pong handling
 	conn.SetPongHandler(func(appData string) error {
-		log.Printf("Received pong from server")
+		logger.Debugf("Received pong from server")
 		return nil
 	})
 
@@ -115,7 +115,7 @@ func (c *Client) ConnectToServer() error {
 		return fmt.Errorf("failed to send handshake: %w", err)
 	}
 
-	log.Printf("Sent handshake with %d available commands", len(c.config.Commands))
+	logger.Infof("Sent handshake with %d available commands", len(c.config.Commands))
 
 	// Wait for handshake acknowledgment
 	var ack map[string]any
@@ -127,14 +127,14 @@ func (c *Client) ConnectToServer() error {
 		return fmt.Errorf("invalid handshake acknowledgment")
 	}
 
-	log.Printf("Handshake completed successfully")
+	logger.Infof("Handshake completed successfully")
 
 	// Handle incoming messages
 	for {
 		var req CommandRequest
 		if err := conn.ReadJSON(&req); err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("WebSocket error: %v", err)
+				logger.Errorf("WebSocket error: %v", err)
 			}
 			break
 		}
@@ -145,11 +145,11 @@ func (c *Client) ConnectToServer() error {
 		case "stop_command":
 			c.stopCommand(req.CommandID)
 		default:
-			log.Printf("Unknown message type: %s", req.Type)
+			logger.Warnf("Unknown message type: %s", req.Type)
 		}
 	}
 
-	log.Printf("Disconnected from server")
+	logger.Infof("Disconnected from server")
 	return nil
 }
 
@@ -162,7 +162,7 @@ func (c *Client) executeCommand(conn *websocket.Conn, req CommandRequest) {
 		return
 	}
 
-	log.Printf("Executing command: %s", fullCommand)
+	logger.Infof("Executing command: %s", fullCommand)
 
 	// Store and manage active command
 	c.storeActiveCommand(req.CommandID, cmd, fullCommand)
@@ -181,7 +181,7 @@ func (c *Client) executeCommand(conn *websocket.Conn, req CommandRequest) {
 func (c *Client) prepareCommand(req CommandRequest) (string, *exec.Cmd, error) {
 	// Security check: Verify command is allowed
 	if !c.config.IsCommandAllowed(req.CommandName) {
-		log.Printf("SECURITY: Blocked unauthorized command '%s' from server", req.CommandName)
+		logger.Warnf("SECURITY: Blocked unauthorized command '%s' from server", req.CommandName)
 		return "", nil, fmt.Errorf("command '%s' is not allowed", req.CommandName)
 	}
 
@@ -324,7 +324,7 @@ func (c *Client) stopCommand(commandID string) {
 		return
 	}
 
-	log.Printf("Stopping command: %s", activeCmd.FullCommand)
+	logger.Infof("Stopping command: %s", activeCmd.FullCommand)
 
 	// Determine timeout based on command complexity
 	timeout := 1 * time.Second
@@ -357,7 +357,7 @@ func (c *Client) sendCommandResponse(conn *websocket.Conn, commandID, output, er
 	}
 
 	if err := conn.WriteJSON(resp); err != nil {
-		log.Printf("Failed to send command response: %v", err)
+		logger.Errorf("Failed to send command response: %v", err)
 	}
 }
 

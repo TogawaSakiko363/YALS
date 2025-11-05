@@ -13,6 +13,7 @@ import (
 	"YALS/internal/agent"
 	"YALS/internal/config"
 	"YALS/internal/handler"
+	"YALS/internal/logger"
 )
 
 func main() {
@@ -21,21 +22,21 @@ func main() {
 	webDir := flag.String("w", "./web", "Path to web frontend directory")
 	flag.Parse()
 
-	// Check if web directory exists
-	if _, err := os.Stat(*webDir); os.IsNotExist(err) {
-		log.Printf("Warning: Web directory '%s' does not exist", *webDir)
-	} else {
-		log.Printf("Using web directory: %s", *webDir)
-	}
-
-	// Load configuration
+	// Load configuration first to get log level
 	cfg, err := config.LoadConfig(*configFile)
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// Set up logging
+	// Set up logging with configured level
 	setupLogging(cfg.Server.LogLevel)
+
+	// Check if web directory exists
+	if _, err := os.Stat(*webDir); os.IsNotExist(err) {
+		logger.Warnf("Web directory '%s' does not exist", *webDir)
+	} else {
+		logger.Infof("Using web directory: %s", *webDir)
+	}
 
 	// Create agent manager
 	agentManager := agent.NewManager()
@@ -43,7 +44,7 @@ func main() {
 	// Configure offline agent cleanup (if enabled)
 	if cfg.Connection.DeleteOfflineAgents > 0 {
 		maxOfflineDuration := time.Duration(cfg.Connection.DeleteOfflineAgents) * time.Second
-		log.Printf("Offline agent cleanup enabled: delete after %v offline", maxOfflineDuration)
+		logger.Infof("Offline agent cleanup enabled: delete after %v offline", maxOfflineDuration)
 
 		// Start periodic cleanup (using keepalive interval, reduced by 10x to save resources)
 		go func() {
@@ -58,12 +59,12 @@ func main() {
 			for range ticker.C {
 				cleaned := agentManager.CleanupOfflineAgents(maxOfflineDuration)
 				if cleaned > 0 {
-					log.Printf("Cleaned up %d offline agents (offline > %v)", cleaned, maxOfflineDuration)
+					logger.Infof("Cleaned up %d offline agents (offline > %v)", cleaned, maxOfflineDuration)
 				}
 			}
 		}()
 	} else {
-		log.Printf("Offline agent cleanup disabled")
+		logger.Infof("Offline agent cleanup disabled")
 	}
 
 	// Create HTTP handler
@@ -87,23 +88,23 @@ func main() {
 		if cfg.Server.TLS {
 			// Check if TLS certificate files exist
 			if _, err := os.Stat(cfg.Server.TLSCertFile); os.IsNotExist(err) {
-				log.Fatalf("TLS certificate file not found: %s", cfg.Server.TLSCertFile)
+				logger.Fatalf("TLS certificate file not found: %s", cfg.Server.TLSCertFile)
 			}
 			if _, err := os.Stat(cfg.Server.TLSKeyFile); os.IsNotExist(err) {
-				log.Fatalf("TLS key file not found: %s", cfg.Server.TLSKeyFile)
+				logger.Fatalf("TLS key file not found: %s", cfg.Server.TLSKeyFile)
 			}
 
-			log.Printf("Starting HTTPS server on %s", addr)
+			logger.Infof("Starting HTTPS server on %s", addr)
 
 			if err := server.ListenAndServeTLS(cfg.Server.TLSCertFile, cfg.Server.TLSKeyFile); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("Failed to start HTTPS server: %v", err)
+				logger.Fatalf("Failed to start HTTPS server: %v", err)
 			}
 		} else {
-			log.Printf("Starting HTTP server on %s", addr)
-			log.Printf("Warning: TLS is disabled. Consider enabling TLS for production use.")
+			logger.Infof("Starting HTTP server on %s", addr)
+			logger.Warnf("TLS is disabled. Consider enabling TLS for production use.")
 
 			if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("Failed to start HTTP server: %v", err)
+				logger.Fatalf("Failed to start HTTP server: %v", err)
 			}
 		}
 	}()
@@ -114,26 +115,18 @@ func main() {
 
 	// Wait for interrupt signal
 	<-stop
-	log.Println("Shutting down server...")
+	logger.Info("Shutting down server...")
 }
 
 // setupLogging configures the logging based on the log level
 func setupLogging(level string) {
-	// Set up logging format
+	// Set the global logger level
+	logger.SetGlobalLevelFromString(level)
+
+	// Log the configured level for debugging
+	logger.Debugf("Logging level set to: %s", level)
+
+	// Also configure the standard log package to use our logger for any legacy log calls
 	log.SetOutput(os.Stdout)
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
-
-	// Configure log level (simplified implementation)
-	switch level {
-	case "debug":
-		// In a real implementation, this would configure more verbose logging
-	case "info":
-		// Default level
-	case "warn":
-		// In a real implementation, this would filter out info logs
-	case "error":
-		// In a real implementation, this would filter out info and warn logs
-	default:
-		log.Printf("Unknown log level: %s, using 'info'", level)
-	}
 }

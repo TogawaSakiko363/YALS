@@ -17,6 +17,9 @@ agent:
     test_ip: "11.4.5.14"
     description: "Your node info"
 
+log:
+  log_level: "info"
+
 # Command templates - flexible command definitions
 # Only these commands can be executed by this agent
 commands:

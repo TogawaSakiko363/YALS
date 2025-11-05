@@ -3,7 +3,6 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -12,6 +11,7 @@ import (
 
 	"YALS/internal/agent"
 	"YALS/internal/config"
+	"YALS/internal/logger"
 	"YALS/internal/validator"
 
 	"github.com/gorilla/websocket"
@@ -147,7 +147,7 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("Failed to upgrade connection: %v", err)
+		logger.Errorf("Failed to upgrade connection: %v", err)
 		return
 	}
 
@@ -185,14 +185,14 @@ func (h *Handler) handleAgentWebSocket(w http.ResponseWriter, r *http.Request) {
 	cfg := config.GetConfig()
 	if cfg == nil || password != cfg.Server.Password {
 		realIP := h.getRealIP(r)
-		log.Printf("Unauthorized agent connection attempt from %s", realIP)
+		logger.Warnf("Unauthorized agent connection attempt from %s", realIP)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("Failed to upgrade agent connection: %v", err)
+		logger.Errorf("Failed to upgrade agent connection: %v", err)
 		return
 	}
 
@@ -205,7 +205,7 @@ func (h *Handler) handleAgentWebSocket(w http.ResponseWriter, r *http.Request) {
 	})
 
 	realIP := h.getRealIP(r)
-	log.Printf("Agent connected from %s", realIP)
+	logger.Infof("Agent connected from %s", realIP)
 
 	// Start ping routine for agent (keep connection alive)
 	go h.pingAgent(conn)
@@ -263,12 +263,12 @@ func (h *Handler) pingAgent(conn *websocket.Conn) {
 	defer func() {
 		ticker.Stop()
 		conn.Close()
-		log.Printf("Agent ping routine stopped, connection closed")
+		logger.Debug("Agent ping routine stopped, connection closed")
 	}()
 
 	for range ticker.C {
 		if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(10*time.Second)); err != nil {
-			log.Printf("Failed to send ping to agent: %v", err)
+			logger.Errorf("Failed to send ping to agent: %v", err)
 			return
 		}
 	}
@@ -282,14 +282,14 @@ func (h *Handler) readPump(conn *websocket.Conn, clientIP string) {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("WebSocket error: %v", err)
+				logger.Errorf("WebSocket error: %v", err)
 			}
 			break
 		}
 
 		var req CommandRequest
 		if err := json.Unmarshal(message, &req); err != nil {
-			log.Printf("Failed to parse command request: %v", err)
+			logger.Errorf("Failed to parse command request: %v", err)
 			continue
 		}
 
@@ -307,7 +307,7 @@ func (h *Handler) readPump(conn *websocket.Conn, clientIP string) {
 		case "stop_command":
 			h.handleStopCommand(req, clientIP)
 		default:
-			log.Printf("Unknown message type: %s", req.Type)
+			logger.Warnf("Unknown message type: %s", req.Type)
 		}
 	}
 }
@@ -375,7 +375,7 @@ func (h *Handler) handleCommand(conn *websocket.Conn, req CommandRequest, client
 	stopChan := make(chan bool, 1)
 
 	// Log command execution with client IP
-	log.Printf("Client [%s] sent run signal for command: %s", clientIP, commandID)
+	logger.Infof("Client [%s] sent run signal for command: %s", clientIP, commandID)
 
 	h.setActiveCommand(commandID, stopChan)
 
@@ -437,7 +437,7 @@ func (h *Handler) handleGetCommands(conn *websocket.Conn) {
 // handleGetAgentCommands handles the get agent commands request
 func (h *Handler) handleGetAgentCommands(conn *websocket.Conn, req CommandRequest) {
 	if req.Agent == "" {
-		log.Printf("Agent name is required for get_agent_commands request")
+		logger.Warnf("Agent name is required for get_agent_commands request")
 		return
 	}
 
@@ -467,7 +467,7 @@ func (h *Handler) handleGetAgentStats(conn *websocket.Conn) {
 func (h *Handler) handleGetConfig(conn *websocket.Conn) {
 	cfg := config.GetConfig()
 	if cfg == nil {
-		log.Printf("Configuration not available")
+		logger.Errorf("Configuration not available")
 		return
 	}
 
@@ -493,7 +493,7 @@ func (h *Handler) handleGetConfig(conn *websocket.Conn) {
 	response.Config["agents_offline"] = fmt.Sprintf("%d", stats["offline"])
 
 	if err := conn.WriteJSON(response); err != nil {
-		log.Printf("Failed to send app config: %v", err)
+		logger.Errorf("Failed to send app config: %v", err)
 	}
 }
 
@@ -501,7 +501,7 @@ func (h *Handler) handleGetConfig(conn *websocket.Conn) {
 func (h *Handler) sendJSONResponse(conn *websocket.Conn, response interface{}, responseType string) {
 	data, err := json.Marshal(response)
 	if err != nil {
-		log.Printf("Failed to marshal %s: %v", responseType, err)
+		logger.Errorf("Failed to marshal %s: %v", responseType, err)
 		return
 	}
 
@@ -533,7 +533,7 @@ func (h *Handler) sendStreamingResponse(conn *websocket.Conn, resp CommandRespon
 
 	data, err := json.Marshal(streamResp)
 	if err != nil {
-		log.Printf("Failed to marshal streaming response: %v", err)
+		logger.Errorf("Failed to marshal streaming response: %v", err)
 		return
 	}
 
@@ -556,7 +556,7 @@ func (h *Handler) sendAgentStatus(conn *websocket.Conn) {
 	// Send directly without client lock check (for initial connection)
 	data, err := json.Marshal(update)
 	if err != nil {
-		log.Printf("Failed to marshal agent status: %v", err)
+		logger.Errorf("Failed to marshal agent status: %v", err)
 		return
 	}
 
@@ -566,12 +566,12 @@ func (h *Handler) sendAgentStatus(conn *websocket.Conn) {
 // handleStopCommand handles a stop command request
 func (h *Handler) handleStopCommand(req CommandRequest, clientIP string) {
 	if req.CommandID == "" {
-		log.Printf("Stop command request missing command_id")
+		logger.Warnf("Stop command request missing command_id")
 		return
 	}
 
 	if h.stopActiveCommand(req.CommandID) {
-		log.Printf("Client [%s] sent stop signal for command: %s", clientIP, req.CommandID)
+		logger.Infof("Client [%s] sent stop signal for command: %s", clientIP, req.CommandID)
 	}
 }
 
@@ -590,7 +590,7 @@ func (h *Handler) BroadcastAgentStatus() {
 func (h *Handler) broadcastToAllClients(message interface{}, messageType string) {
 	data, err := json.Marshal(message)
 	if err != nil {
-		log.Printf("Failed to marshal %s: %v", messageType, err)
+		logger.Errorf("Failed to marshal %s: %v", messageType, err)
 		return
 	}
 

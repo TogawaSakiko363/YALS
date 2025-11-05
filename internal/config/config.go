@@ -1,8 +1,8 @@
 package config
 
 import (
+	"YALS/internal/logger"
 	"fmt"
-	"log"
 	"os"
 	"slices"
 	"strings"
@@ -65,7 +65,7 @@ func LoadConfig(filename string) (*Config, error) {
 
 	// Validate and set default values
 	if config.Connection.DeleteOfflineAgents < 0 {
-		log.Printf("Warning: delete_offline_agents cannot be negative, setting to 0 (disabled)")
+		logger.Warnf("delete_offline_agents cannot be negative, setting to 0 (disabled)")
 		config.Connection.DeleteOfflineAgents = 0
 	}
 
@@ -98,6 +98,10 @@ type AgentConfig struct {
 		Details AgentDetails `yaml:"details"`
 	} `yaml:"agent"`
 
+	Log struct {
+		LogLevel string `yaml:"log_level"`
+	} `yaml:"log"`
+
 	Commands map[string]CommandTemplate `yaml:"commands"`
 	// Internal ordered command list
 	orderedCommands []string
@@ -123,45 +127,108 @@ func LoadAgentConfig(filename string) (*AgentConfig, error) {
 		return nil, fmt.Errorf("error parsing agent config file: %w", err)
 	}
 
-	// Parse YAML to get original command order
-	var rawConfig map[string]any
-	if err := yaml.Unmarshal(data, &rawConfig); err == nil {
-		if commands, ok := rawConfig["commands"].(map[string]any); ok {
-			// Extract command order from YAML
-			config.orderedCommands = make([]string, 0, len(commands))
+	// Parse YAML to get original command order using yaml.Node for order preservation
+	var node yaml.Node
+	if err := yaml.Unmarshal(data, &node); err == nil {
+		config.orderedCommands = extractCommandOrder(&node)
+	}
 
-			// Since Go maps are unordered, we need to extract order from raw YAML data
-			// Use a simple method: order as they appear in config file
-			lines := strings.Split(string(data), "\n")
-			inCommandsSection := false
+	// If no order parsed from YAML structure, fallback to parsing text
+	if len(config.orderedCommands) == 0 {
+		config.orderedCommands = extractCommandOrderFromText(string(data))
+	}
 
-			for _, line := range lines {
-				trimmed := strings.TrimSpace(line)
-				if trimmed == "commands:" {
-					inCommandsSection = true
-					continue
-				}
+	// Final fallback: use alphabetical order for consistency
+	if len(config.orderedCommands) == 0 {
+		config.orderedCommands = make([]string, 0, len(config.Commands))
+		for cmdName := range config.Commands {
+			config.orderedCommands = append(config.orderedCommands, cmdName)
+		}
+		// Sort alphabetically for consistent order
+		slices.Sort(config.orderedCommands)
+	}
 
-				if inCommandsSection {
-					// If encountering new top-level config item, exit commands section
-					if len(trimmed) > 0 && !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, " ") && !strings.HasPrefix(trimmed, "\t") {
-						break
-					}
+	// Set default log level if not specified
+	if config.Log.LogLevel == "" {
+		config.Log.LogLevel = "info"
+	}
 
-					// Check if it's a command definition line
-					if strings.Contains(trimmed, ":") && !strings.HasPrefix(trimmed, "#") && (strings.HasPrefix(trimmed, " ") || strings.HasPrefix(trimmed, "\t")) {
-						parts := strings.SplitN(trimmed, ":", 2)
-						if len(parts) > 0 {
-							cmdName := strings.TrimSpace(parts[0])
-							// Skip command properties, only capture command names
-							excludedFields := []string{"template", "description", "ignore_target", "maxmium_queue"}
+	return &config, nil
+}
 
-							if cmdName != "" && !slices.Contains(excludedFields, cmdName) {
-								// Check if this command is already in the list
-								if !slices.Contains(config.orderedCommands, cmdName) {
-									config.orderedCommands = append(config.orderedCommands, cmdName)
+// extractCommandOrder extracts command order from YAML node structure
+func extractCommandOrder(node *yaml.Node) []string {
+	var commands []string
+
+	// Find the commands node
+	for i := 0; i < len(node.Content); i++ {
+		if node.Content[i].Kind == yaml.DocumentNode && len(node.Content[i].Content) > 0 {
+			// Look for the mapping node
+			mappingNode := node.Content[i].Content[0]
+			if mappingNode.Kind == yaml.MappingNode {
+				// Find "commands" key
+				for j := 0; j < len(mappingNode.Content); j += 2 {
+					if j+1 < len(mappingNode.Content) &&
+						mappingNode.Content[j].Value == "commands" &&
+						mappingNode.Content[j+1].Kind == yaml.MappingNode {
+
+						// Extract command names in order
+						commandsNode := mappingNode.Content[j+1]
+						for k := 0; k < len(commandsNode.Content); k += 2 {
+							if k < len(commandsNode.Content) {
+								cmdName := commandsNode.Content[k].Value
+								if cmdName != "" {
+									commands = append(commands, cmdName)
 								}
 							}
+						}
+						return commands
+					}
+				}
+			}
+		}
+	}
+
+	return commands
+}
+
+// extractCommandOrderFromText extracts command order from text parsing (fallback method)
+func extractCommandOrderFromText(data string) []string {
+	var commands []string
+	lines := strings.Split(data, "\n")
+	inCommandsSection := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Skip empty lines and comments
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		if trimmed == "commands:" {
+			inCommandsSection = true
+			continue
+		}
+
+		if inCommandsSection {
+			// If encountering new top-level config item (no indentation), exit commands section
+			if len(trimmed) > 0 && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+				break
+			}
+
+			// Check if it's a command definition line (has indentation and contains colon)
+			if strings.Contains(trimmed, ":") && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) {
+				parts := strings.SplitN(trimmed, ":", 2)
+				if len(parts) > 0 {
+					cmdName := strings.TrimSpace(parts[0])
+					// Skip command properties, only capture command names
+					excludedFields := []string{"template", "description", "ignore_target", "maxmium_queue"}
+
+					if cmdName != "" && !slices.Contains(excludedFields, cmdName) {
+						// Check if this command is already in the list
+						if !slices.Contains(commands, cmdName) {
+							commands = append(commands, cmdName)
 						}
 					}
 				}
@@ -169,19 +236,7 @@ func LoadAgentConfig(filename string) (*AgentConfig, error) {
 		}
 	}
 
-	// If no order parsed, use default order
-	if len(config.orderedCommands) == 0 {
-		for cmdName := range config.Commands {
-			config.orderedCommands = append(config.orderedCommands, cmdName)
-		}
-	}
-
-	return &config, nil
-}
-
-// contains checks if a slice contains a specific string (deprecated: use slices.Contains)
-func contains(slice []string, item string) bool {
-	return slices.Contains(slice, item)
+	return commands
 }
 
 // GetAvailableCommands returns the list of available commands in the order they appear in the config file

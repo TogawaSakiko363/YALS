@@ -108,7 +108,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=$AGENT_BIN -config $CONFIG_FILE
+ExecStart=$AGENT_BIN -c $CONFIG_FILE
 Restart=always
 RestartSec=5s
 User=root
