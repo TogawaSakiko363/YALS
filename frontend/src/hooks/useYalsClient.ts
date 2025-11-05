@@ -158,9 +158,21 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
           setStreamingOutputs(prev => {
             const newMap = new Map(prev);
             const currentOutput = newMap.get(commandId) || '';
-            const newOutput = message.error ?
-              currentOutput + (currentOutput ? '\n' : '') + message.error :
-              currentOutput + (currentOutput ? '\n' : '') + message.output;
+            
+            // Check output mode - default to "replace" for better user experience
+            const outputMode = message.output_mode || 'replace';
+            
+            let newOutput: string;
+            if (outputMode === 'replace') {
+              // Replace mode: use new output directly
+              newOutput = message.error || message.output || '';
+            } else {
+              // Append mode: accumulate output (original behavior)
+              newOutput = message.error ?
+                currentOutput + (currentOutput ? '\n' : '') + message.error :
+                currentOutput + (currentOutput ? '\n' : '') + message.output;
+            }
+            
             newMap.set(commandId, newOutput);
             return newMap;
           });
@@ -346,7 +358,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     };
 
     return new Promise((resolve, reject) => {
-      let accumulatedOutput = ''; // Accumulate output within Promise
+      let latestOutput = ''; // Store only the latest output frame
 
       // No artificial timeout - let the command run as long as WebSocket connection is alive
       // The command will complete when the backend sends is_complete=true or connection is lost
@@ -389,12 +401,12 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
             response.target === trimmedTarget &&
             !response.is_complete) {
 
-            // Accumulate output
+            // Store latest output frame (replace mode)
             if (response.output) {
-              accumulatedOutput += (accumulatedOutput ? '\n' : '') + response.output;
+              latestOutput = response.output;
             }
             if (response.error) {
-              accumulatedOutput += (accumulatedOutput ? '\n' : '') + response.error;
+              latestOutput = response.error;
             }
           }
 
@@ -412,12 +424,15 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
               socketRef.current.onclose = originalOnClose;
             }
 
+            // Get the final output from streaming outputs (latest frame)
+            const finalOutput = streamingOutputs.get(commandId) || latestOutput || '';
+
             const commandResponse: CommandResponse = {
               success: response.success,
               command: response.command,
               target: response.target,
               agent: response.agent,
-              output: accumulatedOutput, // Use accumulated output
+              output: finalOutput, // Use latest output frame
               error: response.error,
               timestamp: Date.now()
             };
@@ -432,7 +447,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
                   ...commandResponse,
                   // If error message is "cancelled", mark as cancelled state
                   output: commandResponse.error === 'Cancelled' ?
-                    (accumulatedOutput + '\n*** Stopped ***') :
+                    (finalOutput + '\n*** Stopped ***') :
                     commandResponse.output
                 };
 

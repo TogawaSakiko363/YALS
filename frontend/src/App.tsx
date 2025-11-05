@@ -52,14 +52,10 @@ function App() {
       setLatestOutput(null); // Clear previous output
       
       const res = await executeCommand(command, target);
-      // Set final output
+      // Set final output and immediately clear streaming output
       setLatestOutput(res.output || '');
+      clearStreamingOutput(commandId); // Clear streaming output immediately
       setCurrentCommandId(null); // Command completed, clear current command ID
-      
-      // Delay cleanup of streaming output to ensure Terminal component can display final result
-      setTimeout(() => {
-        clearStreamingOutput(commandId);
-      }, 100);
     } catch (error: any) {
       console.error('Command execution failed:', error);
       setLatestOutput(error.message || 'Command execution failed');

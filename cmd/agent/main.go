@@ -11,6 +11,9 @@ import (
 	"YALS/internal/agent"
 	"YALS/internal/config"
 	"YALS/internal/logger"
+
+	// Import plugins to trigger their init functions
+	_ "YALS/internal/plugin/agent"
 )
 
 func main() {

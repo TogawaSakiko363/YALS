@@ -2,7 +2,7 @@
 
 # Application settings
 app:
-  version: "3.0.0-rc8"
+  version: "3.0.0-rc9"
 
 # Server settings
 server:

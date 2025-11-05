@@ -45,6 +45,7 @@ export interface YalsMessage {
   output?: string;
   error?: string;
   is_complete?: boolean;
+  output_mode?: string; // "append" or "replace"
 }
 
 export type CommandType = string;
