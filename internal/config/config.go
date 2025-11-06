@@ -110,10 +110,10 @@ type AgentConfig struct {
 // CommandTemplate represents a command template configuration
 type CommandTemplate struct {
 	Template     string `yaml:"template"`
+	UsePlugin    string `yaml:"use_plugin"` // Plugin name to use instead of template
 	Description  string `yaml:"description"`
 	IgnoreTarget bool   `yaml:"ignore_target"` // Whether target parameter is ignored
 	MaximumQueue int    `yaml:"maxmium_queue"` // Maximum concurrent executions (0 = no limit)
-	UsePlugin    string `yaml:"use_plugin"`    // Plugin name to use instead of template
 }
 
 // LoadAgentConfig loads agent configuration from the specified file
@@ -250,10 +250,10 @@ func (c *AgentConfig) GetAvailableCommands() []CommandInfo {
 			commands = append(commands, CommandInfo{
 				Name:         name,
 				Template:     template.Template,
+				UsePlugin:    template.UsePlugin,
 				Description:  template.Description,
 				IgnoreTarget: template.IgnoreTarget,
 				MaximumQueue: template.MaximumQueue,
-				UsePlugin:    template.UsePlugin,
 			})
 		}
 	}
@@ -265,10 +265,10 @@ func (c *AgentConfig) GetAvailableCommands() []CommandInfo {
 type CommandInfo struct {
 	Name         string `json:"name"`
 	Template     string `json:"template"`
+	UsePlugin    string `json:"use_plugin"` // Plugin name to use instead of template
 	Description  string `json:"description"`
 	IgnoreTarget bool   `json:"ignore_target"` // Whether target parameter is ignored
 	MaximumQueue int    `json:"maxmium_queue"` // Maximum concurrent executions (0 = no limit)
-	UsePlugin    string `json:"use_plugin"`    // Plugin name to use instead of template
 }
 
 // IsCommandAllowed checks if a command is allowed

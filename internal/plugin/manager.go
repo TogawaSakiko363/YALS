@@ -37,6 +37,11 @@ func (m *Manager) SetConfig(cfg *config.AgentConfig) {
 	m.config = cfg
 }
 
+// GetConfig returns the agent configuration
+func (m *Manager) GetConfig() *config.AgentConfig {
+	return m.config
+}
+
 // Register registers a plugin with the manager
 func (m *Manager) Register(plugin Plugin) {
 	m.plugins[plugin.GetName()] = plugin

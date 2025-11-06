@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 )
 
 // MTRPlugin implements the MTR network diagnostic plugin
@@ -140,7 +139,6 @@ func (p *MTRPlugin) runStreamingMTRWithContext(ctx context.Context, cmd *exec.Cm
 
 	// Read output line by line and parse
 	scanner := bufio.NewScanner(stdout)
-	lastUpdate := time.Now()
 
 	go func() {
 		for scanner.Scan() {
@@ -151,13 +149,9 @@ func (p *MTRPlugin) runStreamingMTRWithContext(ctx context.Context, cmd *exec.Cm
 				line := scanner.Text()
 				p.processRawLine(result, line)
 
-				// Send updates every 2 seconds to avoid flooding
-				now := time.Now()
-				if now.Sub(lastUpdate) >= 2*time.Second {
-					output := p.formatMTRResult(result)
-					callback(output, false, false)
-					lastUpdate = now
-				}
+				// Send updates immediately for each new line
+				output := p.formatMTRResult(result)
+				callback(output, false, false)
 			}
 		}
 	}()
