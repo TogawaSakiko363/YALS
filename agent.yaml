@@ -35,8 +35,9 @@ commands:
     template: "nexttrace --nocolor --map --ipv4"
     description: "Visual route tracing"
   
- # geekbench6:   // Our geekbench6 plugin is a paid feature, please contact us for more information.
+ # geekbench6:   // geekbench6 plugin is a paid feature, please contact us for more information.
  #   use_plugin: "geekbench6"
  #   description: "Geekbench 6 CPU benchmark"
  #   ignore_target: true
  #   maxmium_queue: 1
+
