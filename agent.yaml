@@ -40,4 +40,3 @@ commands:
  #   description: "Geekbench 6 CPU benchmark"
  #   ignore_target: true
  #   maxmium_queue: 1
-

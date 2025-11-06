@@ -359,7 +359,7 @@ func (p *MTRPlugin) formatMTRResult(result *MTRResult) string {
 	var output strings.Builder
 
 	// Header
-	output.WriteString("Hop  Host                       Loss%  Snt  Last   Avg    Best   Wrst   StDev\n")
+	output.WriteString("Hop  Host                         Loss%  Snt  Last   Avg    Best   Wrst   StDev\n")
 
 	// Get sorted TTL list
 	ttls := make([]int, 0, len(result.Hops))
@@ -367,6 +367,11 @@ func (p *MTRPlugin) formatMTRResult(result *MTRResult) string {
 		ttls = append(ttls, ttl)
 	}
 	sort.Ints(ttls)
+
+	// Remove the last hop to avoid duplicate target display
+	if len(ttls) > 1 {
+		ttls = ttls[:len(ttls)-1]
+	}
 
 	// Format each hop
 	for _, ttl := range ttls {

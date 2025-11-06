@@ -10,7 +10,7 @@ export const config = {
   faviconPath: '/images/favicon.png',
   
   // Web top-left logo path, please put image files in public/images directory
-  logoPath: '/images/GoMami.svg',
+  logoPath: '/images/Example.svg',
   
   // Web background color
   backgroundColor: '#f5f4f1'
