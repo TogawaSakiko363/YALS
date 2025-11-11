@@ -1,422 +1,159 @@
 # YALS - Yet Another Looking Glass
 
-YALS is a modern distributed Looking Glass system using WebSocket architecture for real-time communication between server and agents. The system supports agent-initiated connections with high availability and automatic reconnection, allowing users to execute network diagnostic commands on globally distributed nodes through a web interface.
+This project is licensed under the [MIT License](LICENSE.md), meaning you are free to use, copy, modify, merge, publish, distribute, sublicense, and even sell the software. However, we also offer customization, maintenance, and hosting services. We can provide you with higher-priority enterprise-level software updates, which will greatly contribute to the sustainable development of our project. We also welcome your financial support for this project. Please contact us for more details.
 
-## 🚀 Key Features
+Telegram: @AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 
-- **🔄 Reverse Connection**: Agents connect to server, NAT/firewall friendly
-- **🔐 Secure Authentication**: Password-based WebSocket auth with TLS/WSS support
-- **📡 Real-time Communication**: WebSocket bidirectional communication with streaming output
-- **🎯 Auto Reconnection**: Automatic agent reconnection with connection history
-- **🌐 Protocol Support**: Auto ws/wss detection, reverse proxy compatible
-- **📊 Status Management**: Real-time online/offline status with connection history
-- **🛡️ Command Whitelist**: Agent-side command restrictions for security
-- **🎨 Responsive UI**: Modern web interface with mobile support
-- **⚡ High Performance**: Concurrent command execution with intelligent sorting
-- **🔧 Flexible Config**: Custom web directory, offline cleanup policies
+## Overview
 
-## 🌍 Live Examples
+YALS (Yet Another Looking Glass) is a modern, web-based network diagnostic tool that provides a unified interface for executing network commands across distributed agents. Built with Go backend and React frontend, it offers real-time command execution, agent management, and comprehensive network diagnostics.
 
-  [Sharon Networks](https://lg.sharon.io)
-  
-  [LeiKwan Host](https://routing.leikwanhost.com/)
+## Features
 
-  [Gomami Networks](https://lg.gomami.io)
+- **Real-time Network Diagnostics**: Execute commands like ping, mtr, traceroute in real-time with real-time streaming output
+- **Distributed Agent Architecture**: Deploy agents across multiple locations for comprehensive network testing
+- **Web-based Interface**: Modern React-based UI
+- **Secure WebSocket Communication**: Real-time bidirectional communication between server and agents
+- **Agent Management**: Automatic agent discovery, grouping, and health monitoring
+- **Command History**: Persistent command history with local storage
+- **Responsive Design**: Works seamlessly on desktop and mobile devices
+- **TLS/HTTPS Support**: Secure communication with optional TLS encryption
+- **Plugin System**: Extensible architecture for custom command plugins
+- **Offline Agent Cleanup**: Automatic cleanup of offline agents with configurable timeout
 
-## ⚡ Quick Start
+## Architecture
 
-### Deploy Server (Linux)
+### Backend (Go)
+- **WebSocket Server**: Handles real-time communication with agents and frontend
+- **Agent Manager**: Manages agent connections, status monitoring, and command routing
+- **Plugin System**: Extensible command execution through plugins
+- **Configuration Management**: YAML-based configuration for server and agents
+- **Logging**: Structured logging with configurable levels
 
-```bash
-bash <(curl -sL https://mirror.autec.my/yals/install_server.sh) \
-  --server-host 172.18.0.1 \
-  --server-port 1867 \
-  --server-password "your_password"
-```
+### Frontend (React + TypeScript)
+- **Modern React 18**: Built with hooks and functional components
+- **TypeScript**: Full type safety throughout the application
+- **Tailwind CSS**: Utility-first CSS framework for styling
+- **Vite**: Fast build tool and development server
 
-### Deploy Agent
+## Configuration
 
-```bash
-bash <(curl -sL https://mirror.autec.my/yals/install_agent.sh) \
-  --server-host lg.example.com \
-  --server-port 443 \
-  --server-password "your_password" \
-  --server-tls true \
-  --agent-name "Node 1" \
-  --agent-group "Location A" \
-  --location "Earth" \
-  --datacenter "DEEPDARK 1" \
-  --test-ip "11.4.5.14" \
-  --description "Your node info"
-```
-
-### Update Server/Agent
-
-```bash
-# Update Server
-bash <(curl -sL https://mirror.autec.my/yals/install_server.sh) update
-
-# Update Agent
-bash <(curl -sL https://mirror.autec.my/yals/install_agent.sh) update
-```
-
-## 📋 System Requirements
-
-### Server
-
-- **OS**: Windows / Linux 
-- **Network**: Public IP or domain with inbound connections
-- **Port**: Configurable port (default 8080), reverse proxy supported
-
-### Agent
-
-- **OS**: Linux (Debian 12+ recommended)
-- **Network**: Outbound connection to server
-- **Tools**: ping, mtr, nexttrace (install before using quick start scripts)
-
-## 🛠️ Manual Installation
-
-### Build from Source
-
-```bash
-# Clone repository
-git clone https://github.com/your-repo/yals.git
-cd yals
-
-# Windows build
-./build_binaries.bat
-
-# Linux/macOS build
-go build -o yals_server ./cmd/server/main.go
-go build -o yals_agent ./cmd/agent/main.go
-```
-
-### Server Setup
-
-1. **Create config file** (`config.yaml`):
+### Server Configuration (config.yaml)
 ```yaml
-# Application settings
-app:
-  version: "3.0.0-rc3"
-
-# Server settings
 server:
-  host: "0.0.0.0"      # Listen address
-  port: 8080           # Listen port
-  password: "abc123"   # Agent connection password
-  log_level: "info"
+  host: "0.0.0.0"
+  port: 443
+  password: "your_secure_password"
+  tls: true
+  tls_cert_file: "./cert.pem"
+  tls_key_file: "./key.pem"
 
-# WebSocket settings
 websocket:
-  ping_interval: 30    # Heartbeat interval (seconds)
-  pong_wait: 60        # Heartbeat timeout (seconds)
+  ping_interval: 30
+  pong_wait: 60
 
-# Connection settings
 connection:
   timeout: 10
   keepalive: 30
   retry_interval: 15
   max_retries: 0
-  delete_offline_agents: 86400  # Clean offline agents after 24 hours
+  delete_offline_agents: 86400
 ```
 
-2. **Start server**:
-```bash
-# Use default config
-./yals_server
-
-# Specify config and web directory
-./yals_server -c config.yaml -w ./web
-```
-
-### Agent Setup
-
-1. **Create config file** (`agent.yaml`):
+### Agent Configuration (agent.yaml)
 ```yaml
-# Server connection
 server:
-  host: "lg.example.com"    # Server address
-  port: 443                 # Server port
-  password: "abc123"        # Connection password
-  tls: true                 # Use WSS encryption (recommended)
+  host: "your-server.com"
+  port: 443
+  password: "your_secure_password"
+  tls: true
 
-# Agent information
 agent:
-  name: "Node 1"           # Agent name
-  group: "Location A"      # Group name
+  name: "Node 1"
+  group: "Location A"
   details:
-    location: "Tokyo, JP"
-    datacenter: "DC1"
+    location: "Your Location"
+    datacenter: "Your Datacenter"
     test_ip: "1.2.3.4"
-    description: "Test node"
+    description: "Your node description"
 
-# Command whitelist
 commands:
   ping:
     template: "ping -c 4"
     description: "Network connectivity test"
+  
   mtr:
-    template: "mtr -rw -c 4"
-    description: "Network route and packet loss analysis"
-  nexttrace:
-    template: "nexttrace --nocolor --map --ipv4"
-    description: "Visual route tracing"
+    use_plugin: "mtr"
+    description: "Network route analysis"
 ```
 
-2. **Start agent**:
-```bash
-# Start with config file
-./yals_agent -c agent.yaml
-```
+## Usage
 
-### 🔧 Advanced Configuration
+1. **Access the web interface**: Open your browser to `https://your-server.com`
+2. **Select an agent**: Choose from available agents in the dropdown
+3. **Choose a command**: Select from available commands for the agent
+4. **Enter target**: Input the IP address or hostname to test
+5. **Execute**: Click execute to run the command
+6. **View results**: Real-time output appears in the terminal display
 
-#### System Service Setup
-```bash
-# Create systemd service file
-sudo tee /etc/systemd/system/yals-server.service > /dev/null <<EOF
-[Unit]
-Description=YALS Server
-After=network.target
+## Command Plugins
 
-[Service]
-Type=simple
-User=yals
-WorkingDirectory=/opt/yals
-ExecStart=/opt/yals/yals_server -c /opt/yals/config.yaml -w /opt/yals/web
-Restart=always
-RestartSec=5
+YALS supports custom command plugins. Place your plugin executables in the appropriate plugin directory:
+- Server plugins: `./internal/plugin/server/`
+- Agent plugins: `./internal/plugin/agent/`
 
-[Install]
-WantedBy=multi-user.target
-EOF
+Plugins should accept command-line arguments and output results to stdout/stderr.
 
-# Enable and start service
-sudo systemctl enable yals-server
-sudo systemctl start yals-server
-```
+## Security
 
-## 🔐 Security Architecture
+- **Password Authentication**: All connections require password authentication
+- **TLS Encryption**: Optional TLS support for secure communication
+- **Command Whitelisting**: Agents only execute pre-configured commands
+- **Input Validation**: All user inputs are validated and sanitized
 
-### Modern Security Design
+## API Documentation
 
-YALS 3.0+ uses reverse connection architecture with multi-layer security mechanisms:
+### WebSocket Messages
 
-#### 🛡️ Core Security Features
-- **🔄 Reverse Connection**: Agent connects to server, no agent port exposure
-- **🔐 Password Authentication**: WebSocket password-based authentication
-- **🔒 TLS Encryption**: WSS encryption support, prevents man-in-the-middle attacks
-- **📝 Command Whitelist**: Agent-side strict command execution control
-- **🎯 Template Execution**: Predefined command templates prevent injection
-- **💓 Heartbeat Detection**: 30-second heartbeat for connection monitoring
-- **🌐 Proxy Support**: Reverse proxy support with real client IP detection
+#### Agent to Server
+- `agent_status`: Agent status update
+- `command_output`: Command execution output
+- `command_complete`: Command completion notification
 
-#### 🔄 Architecture Evolution
+#### Server to Agent
+- `execute_command`: Execute a command
+- `get_agent_commands`: Request available commands
 
-| Feature | Old (SSH) | New (WebSocket) |
-|---------|-----------|-----------------|
-| Connection | Server → Agent | Agent → Server |
-| Port Requirements | Agent needs open port | Only server needs open port |
-| Firewall Friendly | ❌ Inbound rules needed | ✅ Outbound only |
-| Command Control | Server-side defined | Agent-side whitelist |
-| Security Risk | 🔴 Remote code execution | 🟢 Whitelist protection |
-| Real-time | ❌ Batch execution | ✅ Streaming output |
-| Reconnection | ❌ Manual reconnect | ✅ Auto reconnect |
+#### Server to Client
+- `agent_status`: Agent status information
+- `commands_list`: Available commands list
+- `command_output`: Real-time command output
+- `app_config`: Application configuration
 
-### 🔒 Security Mechanisms
-
-#### 1. Multi-layer Authentication
-```
-┌─────────────┐  Password Auth  ┌─────────────┐
-│   Agent     │ ──────────────► │   Server    │
-│             │    WSS/TLS     │             │
-└─────────────┘                └─────────────┘
-```
-
-#### 2. Command Execution Security Chain
-```
-User Request → Server Validation → Agent Whitelist Check → Template Execution → Result Return
-```
-
-#### 3. Network Security Features
-- **🔐 TLS Encryption**: WSS protocol support with encrypted data transmission
-- **🌐 Proxy Friendly**: X-Real-IP and X-Forwarded-For header support
-- **💓 Connection Monitoring**: Heartbeat detection with automatic disconnection
-- **🚫 Access Control**: Password-based connection authentication
-
-#### 4. Runtime Security
-- **📝 Command Auditing**: All command executions are logged
-- **⏱️ Timeout Protection**: Automatic command termination on timeout
-- **🔄 State Isolation**: Each agent runs independently
-
-### Security Best Practices
-
-#### 1. Password Security
-- Use strong passwords (12+ characters with mixed case, numbers, symbols)
-- Rotate passwords regularly
-
-#### 2. Network Security
-- Deploy in private network environments
-- Use firewall access restrictions
-- Consider VPN or dedicated networks
-
-#### 3. Command Restrictions
-- Only add necessary commands to whitelist
-- Regularly review command lists
-- Avoid dangerous commands (rm, dd, etc.)
-
-#### 4. Monitoring and Logging
-- Monitor agent connection status
-- Log command executions
-- Set up anomaly alerts
-
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
-#### Agent Connection Issues
-```bash
-# 1. Check network connectivity
-curl -I http://your-server:8080
+1. **Agent connection failed**
+   - Check server host and port configuration
+   - Verify password matches between agent and server
+   - Check firewall rules
 
-# 2. Verify TLS configuration
-openssl s_client -connect your-server:443 -servername your-domain
+2. **TLS certificate errors**
+   - Ensure certificate files exist and are readable
+   - Verify certificate validity and domain matching
+   - Check file permissions
 
-# 3. Check agent logs
-journalctl -u yals-agent -f
+3. **Commands not executing**
+   - Verify command is configured in agent.yaml
+   - Check command plugin exists and is executable
+   - Review agent logs for errors
 
-# 4. Verify password configuration
-grep -r "password" config.yaml agent.yaml
-```
+4. **WebSocket connection issues**
+   - Check WebSocket ping/pong settings
+   - Verify proxy/firewall allows WebSocket connections
+   - Review browser console for errors
 
-#### Command Execution Issues
-```bash
-# 1. Check command whitelist
-./yals_agent -c agent.yaml --list-commands
+---
 
-# 2. Test command permissions
-sudo -u yals ping -c 1 8.8.8.8
-
-# 3. Check command paths
-which ping mtr nexttrace
-
-# 4. Verify agent status
-systemctl status yals-agent
-```
-
-#### Performance Optimization
-```bash
-# 1. Adjust heartbeat interval
-# Modify ping_interval in config.yaml
-
-# 2. Optimize cleanup strategy  
-# Set delete_offline_agents parameter
-
-# 3. Monitor resource usage
-htop
-netstat -tulpn | grep yals
-```
-
-## 🚀 Advanced Features
-
-### Reverse Proxy Configuration
-
-#### Nginx Configuration
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name lg.example.com;
-    
-    # SSL configuration
-    ssl_certificate /path/to/cert.pem;
-    ssl_certificate_key /path/to/key.pem;
-    
-    # WebSocket proxy
-    location /ws {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header Host $host;
-    }
-    
-    # Static files
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header Host $host;
-    }
-}
-```
-
-## Frontend Build Instructions
-
-### Install Dependencies
-
-```bash
-cd frontend
-npm install
-```
-
-### Custom Web Title and Logo
-
-Since version 2.2.3, you can customize the Looking Glass in `src/custom.tsx`:
-
-```typescript
-// Web customization config file
-export const config = {
-  // Page title
-  pageTitle: 'Example Networks, LLC. - Looking Glass',
-  
-  // Footer right text
-  footerRightText: '© 2025 Example Networks, LLC.',
-  
-  // Favicon path
-  faviconPath: '/images/favicon.ico',
-  
-  // Logo path (top-left corner)
-  logoPath: '/images/Example.svg',
-  
-  // Background color
-  backgroundColor: '#f5f4f1'
-};
-
-// Export type definition for TypeScript
-export type ConfigType = typeof config;
-```
-
-### Build Frontend
-
-Run build command:
-
-```bash
-npm run build
-```
-
-## 🎯 Usage
-
-### Web Interface
-
-1. **Access Interface**: Open `http://your-server:8080` in browser
-2. **Select Node**: Choose online agent from left panel
-3. **Select Command**: Choose network diagnostic command
-4. **Enter Target**: Input target IP address or domain
-5. **Execute Command**: Click execute button to start test
-6. **View Results**: Real-time command output and execution status
-7. **Stop Command**: Click stop button to terminate execution anytime
-
-### 🎨 Interface Features
-
-- **📱 Responsive Design**: Desktop and mobile device support
-- **🔄 Real-time Updates**: Agent status and command output refresh in real-time
-- **📊 Smart Sorting**: Agents sorted alphabetically for consistency
-- **🏷️ Group Display**: Grouped by geographic location or purpose
-- **⏹️ Command Control**: Support command stop and re-execution
-- **📋 Result Copy**: One-click copy of command output
-
-## 📄 License
-
-This project is licensed under the [MIT License](LICENSE.md).
+**Star ⭐ this repository if you find it helpful!**
