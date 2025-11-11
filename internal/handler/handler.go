@@ -12,6 +12,7 @@ import (
 	"YALS/internal/agent"
 	"YALS/internal/config"
 	"YALS/internal/logger"
+	"YALS/internal/plugin"
 	"YALS/internal/validator"
 
 	"github.com/gorilla/websocket"
@@ -19,16 +20,19 @@ import (
 
 // Handler handles HTTP and WebSocket requests
 type Handler struct {
-	agentManager   *agent.Manager
-	upgrader       websocket.Upgrader
-	clients        map[*websocket.Conn]bool
-	clientIPs      map[*websocket.Conn]string // Track client IPs
-	clientsLock    sync.RWMutex
-	pingInterval   time.Duration
-	pongWait       time.Duration
-	activeCommands map[string]chan bool // Channel for stopping commands
-	commandsLock   sync.RWMutex
-	webDir         string // Frontend files directory
+	agentManager    *agent.Manager
+	upgrader        websocket.Upgrader
+	clients         map[*websocket.Conn]bool
+	clientIPs       map[*websocket.Conn]string
+	clientSessions  map[*websocket.Conn]string
+	sessionConns    map[string]*websocket.Conn
+	commandSessions map[string]string
+	clientsLock     sync.RWMutex
+	pingInterval    time.Duration
+	pongWait        time.Duration
+	activeCommands  map[string]chan bool
+	commandsLock    sync.RWMutex
+	webDir          string
 }
 
 // CommandRequest represents a command request from the client
@@ -60,6 +64,7 @@ type StreamingCommandResponse struct {
 	Output     string `json:"output"`
 	Error      string `json:"error,omitempty"`
 	IsComplete bool   `json:"is_complete"`
+	CommandID  string `json:"command_id,omitempty"`
 }
 
 // AgentStatusUpdate represents an agent status update
@@ -86,52 +91,49 @@ func NewHandler(agentManager *agent.Manager, pingInterval, pongWait time.Duratio
 	return &Handler{
 		agentManager: agentManager,
 		upgrader: websocket.Upgrader{
-			ReadBufferSize:  65536, // 64KB read buffer
-			WriteBufferSize: 65536, // 64KB write buffer
+			ReadBufferSize:  65536,
+			WriteBufferSize: 65536,
 			CheckOrigin: func(r *http.Request) bool {
-				return true // Allow all origins in this example
+				return true
 			},
 		},
-		clients:        make(map[*websocket.Conn]bool),
-		clientIPs:      make(map[*websocket.Conn]string),
-		pingInterval:   pingInterval,
-		pongWait:       pongWait,
-		activeCommands: make(map[string]chan bool),
+		clients:         make(map[*websocket.Conn]bool),
+		clientIPs:       make(map[*websocket.Conn]string),
+		clientSessions:  make(map[*websocket.Conn]string),
+		sessionConns:    make(map[string]*websocket.Conn),
+		commandSessions: make(map[string]string),
+		pingInterval:    pingInterval,
+		pongWait:        pongWait,
+		activeCommands:  make(map[string]chan bool),
 	}
 }
 
 // SetupRoutes sets up the HTTP routes
 func (h *Handler) SetupRoutes(mux *http.ServeMux, webDir string) {
-	// Store webDir for use in handlers
 	h.webDir = webDir
 
 	mux.HandleFunc("/", h.handleIndex)
-	mux.HandleFunc("/ws", h.handleWebSocket)
+	mux.HandleFunc("/ws/", h.handleWebSocket)
 	mux.HandleFunc("/ws/api/agent", h.handleAgentWebSocket)
 
-	// Serve static files from specified web directory
 	fs := http.FileServer(http.Dir(webDir))
 	mux.Handle("/assets/", fs)
 }
 
 // handleIndex handles the index page
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
-	// Handle specific paths
 	switch r.URL.Path {
 	case "/":
 		indexPath := filepath.Join(h.webDir, "index.html")
 		http.ServeFile(w, r, indexPath)
 		return
 	default:
-		// Try to serve from web directory
 		filePath := filepath.Join(h.webDir, r.URL.Path[1:])
 		if _, err := http.Dir(h.webDir).Open(r.URL.Path[1:]); err == nil {
 			http.ServeFile(w, r, filePath)
 			return
 		}
 
-		// Handle SPA routing - serve index.html for all other paths
-		// This implements the rule from _redirects: /* /index.html 200
 		if r.Header.Get("Accept") != "" && !strings.Contains(r.Header.Get("Accept"), "application/json") {
 			indexPath := filepath.Join(h.webDir, "index.html")
 			http.ServeFile(w, r, indexPath)
@@ -145,42 +147,48 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 // handleWebSocket handles WebSocket connections from web clients
 func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	clientIP := h.getRealIP(r)
+
+	var sessionID string
+	path := strings.TrimPrefix(r.URL.Path, "/ws/")
+
+	if path != "" && path != r.URL.Path {
+		sessionID = path
+	} else {
+		sessionID = r.URL.Query().Get("sessionId")
+	}
+
+	if sessionID == "" {
+		sessionID = fmt.Sprintf("session_%d_%s", time.Now().UnixNano(), clientIP)
+	}
+
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		logger.Errorf("Failed to upgrade connection: %v", err)
 		return
 	}
 
-	// Get client IP
-	clientIP := h.getRealIP(r)
-
-	// Register client
 	h.clientsLock.Lock()
 	h.clients[conn] = true
 	h.clientIPs[conn] = clientIP
+	h.clientSessions[conn] = sessionID
+	h.sessionConns[sessionID] = conn
 	h.clientsLock.Unlock()
 
-	// Set up connection handling
-	conn.SetReadLimit(32768) // 32KB limit for web client messages
+	conn.SetReadLimit(32768)
 	conn.SetReadDeadline(time.Now().Add(h.pongWait))
 	conn.SetPongHandler(func(string) error {
 		conn.SetReadDeadline(time.Now().Add(h.pongWait))
 		return nil
 	})
 
-	// Send initial agent status
 	h.sendAgentStatus(conn)
-
-	// Start ping routine
 	go h.pingClient(conn)
-
-	// Handle incoming messages
 	go h.readPump(conn, clientIP)
 }
 
 // handleAgentWebSocket handles WebSocket connections from agents
 func (h *Handler) handleAgentWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Check password
 	password := r.Header.Get("X-Agent-Password")
 	cfg := config.GetConfig()
 	if cfg == nil || password != cfg.Server.Password {
@@ -196,8 +204,7 @@ func (h *Handler) handleAgentWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set up connection handling for agents
-	conn.SetReadLimit(65536) // 64KB limit for agent messages (handshake can be large)
+	conn.SetReadLimit(65536)
 	conn.SetReadDeadline(time.Now().Add(h.pongWait))
 	conn.SetPongHandler(func(string) error {
 		conn.SetReadDeadline(time.Now().Add(h.pongWait))
@@ -207,32 +214,25 @@ func (h *Handler) handleAgentWebSocket(w http.ResponseWriter, r *http.Request) {
 	realIP := h.getRealIP(r)
 	logger.Infof("Agent connected from %s", realIP)
 
-	// Start ping routine for agent (keep connection alive)
 	go h.pingAgent(conn)
-
-	// Handle agent connection
 	h.agentManager.HandleAgentConnection(conn)
 }
 
-// getRealIP gets the real client IP address, supports reverse proxy
+// getRealIP gets the real client IP address
 func (h *Handler) getRealIP(r *http.Request) string {
-	// First try X-Real-IP header
 	ip := r.Header.Get("X-Real-IP")
 	if ip != "" {
 		return ip
 	}
 
-	// Then try X-Forwarded-For header (take first IP)
 	forwarded := r.Header.Get("X-Forwarded-For")
 	if forwarded != "" {
-		// X-Forwarded-For may contain multiple IPs, take the first one
 		if idx := strings.Index(forwarded, ","); idx != -1 {
 			return strings.TrimSpace(forwarded[:idx])
 		}
 		return strings.TrimSpace(forwarded)
 	}
 
-	// Finally use RemoteAddr
 	return r.RemoteAddr
 }
 
@@ -243,10 +243,14 @@ func (h *Handler) pingClient(conn *websocket.Conn) {
 		ticker.Stop()
 		conn.Close()
 
-		// Unregister client
 		h.clientsLock.Lock()
+		sessionID := h.clientSessions[conn]
 		delete(h.clients, conn)
 		delete(h.clientIPs, conn)
+		delete(h.clientSessions, conn)
+		if sessionID != "" {
+			delete(h.sessionConns, sessionID)
+		}
 		h.clientsLock.Unlock()
 	}()
 
@@ -348,8 +352,17 @@ func (h *Handler) handleCommand(conn *websocket.Conn, req CommandRequest, client
 	}
 
 	// Get command configuration to check ignore_target
-	if cmdConfig, exists := h.getCommandConfig(req.Agent, req.Command); exists && cmdConfig.IgnoreTarget {
-		requiresTarget = false
+	if cmdConfig, exists := h.getCommandConfig(req.Agent, req.Command); exists {
+		// Check if this is a plugin command and if plugin overrides ignore_target
+		if cmdConfig.UsePlugin != "" {
+			if hasOverride, ignoreTarget := plugin.GetPluginIgnoreTarget(cmdConfig.UsePlugin); hasOverride {
+				requiresTarget = !ignoreTarget
+			} else if cmdConfig.IgnoreTarget {
+				requiresTarget = false
+			}
+		} else if cmdConfig.IgnoreTarget {
+			requiresTarget = false
+		}
 	}
 
 	// Validate input only if target is required
@@ -370,23 +383,43 @@ func (h *Handler) handleCommand(conn *websocket.Conn, req CommandRequest, client
 		return
 	}
 
-	// Create stop channel
-	commandID := h.generateCommandID(req.Command, req.Target, req.Agent)
+	// Get session ID for this connection BEFORE generating commandID
+	h.clientsLock.RLock()
+	sessionID := h.clientSessions[conn]
+	h.clientsLock.RUnlock()
+
+	// Generate commandID with sessionID included to ensure uniqueness across users
+	commandID := h.generateCommandID(req.Command, req.Target, req.Agent, sessionID)
 	stopChan := make(chan bool, 1)
 
-	// Log command execution with client IP
+	// Store command-to-session mapping
+	h.clientsLock.Lock()
+	h.commandSessions[commandID] = sessionID
+	h.clientsLock.Unlock()
+
+	// Clean up mapping when command completes
+	defer func() {
+		h.clientsLock.Lock()
+		delete(h.commandSessions, commandID)
+		h.clientsLock.Unlock()
+	}()
+
+	// Log command execution with client IP and session
 	logger.Infof("Client [%s] sent run signal for command: %s", clientIP, commandID)
 
 	h.setActiveCommand(commandID, stopChan)
 
 	// Execute command with streaming output
 	err := h.agentManager.ExecuteCommandStreamingWithStopAndID(req.Agent, cmd, commandID, stopChan, func(output string, isError bool, isComplete bool, isStopped bool) {
+		// Get the correct connection for this command using commandID routing
+		targetConn := h.getConnectionForCommand(commandID, conn)
+
 		if isStopped {
-			// Send stopped message
-			stoppedResp := h.createCommandResponse(req, false)
-			stoppedResp.Output = "*** Stopped ***"
-			stoppedResp.Error = "*** Stopped ***"
-			h.sendStreamingResponse(conn, stoppedResp, true)
+			// Send stopped message - use append mode to preserve last output
+			stoppedResp := h.createCommandResponse(req, true) // success=true to avoid error state
+			stoppedResp.Output = "\n*** Stopped ***"
+			stoppedResp.Error = ""
+			h.sendStreamingResponseWithIDAndModeAndStopped(targetConn, stoppedResp, true, commandID, "append", true)
 		} else if isComplete {
 			// Send completion message
 			if isError {
@@ -399,7 +432,7 @@ func (h *Handler) handleCommand(conn *websocket.Conn, req CommandRequest, client
 				resp.Success = true
 				resp.Output = "" // Final message with empty output to signal completion
 			}
-			h.sendStreamingResponse(conn, resp, true)
+			h.sendStreamingResponseWithID(targetConn, resp, true, commandID)
 		} else {
 			// Send streaming output
 			streamResp := h.createCommandResponse(req, true)
@@ -408,7 +441,7 @@ func (h *Handler) handleCommand(conn *websocket.Conn, req CommandRequest, client
 				streamResp.Error = output
 				streamResp.Output = ""
 			}
-			h.sendStreamingResponse(conn, streamResp, false)
+			h.sendStreamingResponseWithID(targetConn, streamResp, false, commandID)
 		}
 	})
 
@@ -513,22 +546,64 @@ func (h *Handler) sendJSONResponse(conn *websocket.Conn, response interface{}, r
 	}
 }
 
+// getConnectionForCommand returns the WebSocket connection for a given command ID
+// If commandID is not found or session is disconnected, returns the original conn
+func (h *Handler) getConnectionForCommand(commandID string, fallbackConn *websocket.Conn) *websocket.Conn {
+	h.clientsLock.RLock()
+	defer h.clientsLock.RUnlock()
+
+	// Find session ID for this command
+	sessionID, exists := h.commandSessions[commandID]
+	if !exists {
+		// Command not found in mapping, use fallback
+		return fallbackConn
+	}
+
+	// Find connection for this session
+	conn, exists := h.sessionConns[sessionID]
+	if !exists || conn == nil {
+		// Session disconnected, use fallback
+		return fallbackConn
+	}
+
+	// Verify connection is still active
+	if _, active := h.clients[conn]; !active {
+		// Connection no longer active, use fallback
+		return fallbackConn
+	}
+
+	return conn
+}
+
 // sendResponse sends a response to the client
 func (h *Handler) sendResponse(conn *websocket.Conn, resp CommandResponse) {
 	h.sendJSONResponse(conn, resp, "command response")
 }
 
-// sendStreamingResponse sends a streaming response to the client
-func (h *Handler) sendStreamingResponse(conn *websocket.Conn, resp CommandResponse, isComplete bool) {
-	streamResp := StreamingCommandResponse{
-		Type:       "command_output",
-		Success:    resp.Success,
-		Agent:      resp.Agent,
-		Command:    resp.Command,
-		Target:     resp.Target,
-		Output:     resp.Output,
-		Error:      resp.Error,
-		IsComplete: isComplete,
+// sendStreamingResponseWithID sends a streaming response to the client with command ID
+func (h *Handler) sendStreamingResponseWithID(conn *websocket.Conn, resp CommandResponse, isComplete bool, commandID string) {
+	h.sendStreamingResponseWithIDAndMode(conn, resp, isComplete, commandID, "replace")
+}
+
+// sendStreamingResponseWithIDAndMode sends a streaming response to the client with command ID and output mode
+func (h *Handler) sendStreamingResponseWithIDAndMode(conn *websocket.Conn, resp CommandResponse, isComplete bool, commandID string, outputMode string) {
+	h.sendStreamingResponseWithIDAndModeAndStopped(conn, resp, isComplete, commandID, outputMode, false)
+}
+
+// sendStreamingResponseWithIDAndModeAndStopped sends a streaming response with all options including stopped flag
+func (h *Handler) sendStreamingResponseWithIDAndModeAndStopped(conn *websocket.Conn, resp CommandResponse, isComplete bool, commandID string, outputMode string, stopped bool) {
+	streamResp := map[string]any{
+		"type":        "command_output",
+		"success":     resp.Success,
+		"agent":       resp.Agent,
+		"command":     resp.Command,
+		"target":      resp.Target,
+		"output":      resp.Output,
+		"error":       resp.Error,
+		"is_complete": isComplete,
+		"command_id":  commandID,
+		"output_mode": outputMode,
+		"stopped":     stopped,
 	}
 
 	data, err := json.Marshal(streamResp)
@@ -603,8 +678,9 @@ func (h *Handler) broadcastToAllClients(message interface{}, messageType string)
 }
 
 // generateCommandID generates a unique command ID
-func (h *Handler) generateCommandID(command, target, agent string) string {
-	return fmt.Sprintf("%s-%s-%s", command, target, agent)
+func (h *Handler) generateCommandID(command, target, agent, sessionID string) string {
+	timestamp := time.Now().UnixNano()
+	return fmt.Sprintf("%s-%s-%s-%s-%d", command, target, agent, sessionID, timestamp)
 }
 
 // createCommandResponse creates a base command response
@@ -637,7 +713,7 @@ func (h *Handler) stopActiveCommand(commandID string) bool {
 	defer h.commandsLock.Unlock()
 
 	if stopChan, exists := h.activeCommands[commandID]; exists {
-		close(stopChan) // Send stop signal
+		close(stopChan)
 		delete(h.activeCommands, commandID)
 		return true
 	}
@@ -646,18 +722,12 @@ func (h *Handler) stopActiveCommand(commandID string) bool {
 
 // getCommandConfig gets the command configuration from the agent manager
 func (h *Handler) getCommandConfig(agentName, commandName string) (config.CommandInfo, bool) {
-	// This is a helper method to get command config from agent manager
-	// We need to access the agent's command configuration
 	agents := h.agentManager.GetAgents()
 	for _, a := range agents {
 		if a["name"] == agentName {
-			// Get the agent's commands with full configuration
 			agentCommands := h.agentManager.GetAgentCommands(agentName)
 			for _, cmd := range agentCommands {
 				if cmd.Name == commandName {
-					// Convert validator.CommandDetail to config.CommandInfo
-					// This is a limitation of the current design - we need to access the full config
-					// For now, we'll use the agent manager's internal method
 					return h.agentManager.GetCommandConfigInternal(agentName, commandName)
 				}
 			}

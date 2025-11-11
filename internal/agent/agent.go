@@ -54,8 +54,6 @@ type Manager struct {
 	agentsLock         sync.RWMutex
 	outputHandlers     map[string]chan CommandOutput
 	outputHandlersLock sync.RWMutex
-	commandQueues      map[string]map[string]int // agentName -> commandName -> activeCount
-	queueLock          sync.RWMutex
 }
 
 // NewManager creates a new agent manager
@@ -63,7 +61,6 @@ func NewManager() *Manager {
 	return &Manager{
 		agents:         make(map[string]*Agent),
 		outputHandlers: make(map[string]chan CommandOutput),
-		commandQueues:  make(map[string]map[string]int),
 	}
 }
 
@@ -317,15 +314,8 @@ func (m *Manager) ExecuteCommandStreamingWithStopAndID(agentName, command, comma
 		return fmt.Errorf("command not found: %s", commandName)
 	}
 
-	// Check queue limit
-	if !m.checkCommandQueueLimit(agentName, commandName, cmdConfig.MaximumQueue) {
-		callback("This command has reached its execution limit. Please try again later.", true, true, false)
-		return nil
-	}
-
-	// Increment queue counter
-	m.incrementCommandQueue(agentName, commandName)
-	defer m.decrementCommandQueue(agentName, commandName)
+	// Note: Queue limit checking is now handled by agent-side plugins
+	// Server no longer enforces queue limits to allow plugins to provide custom messages
 
 	// Handle ignore_target: if ignore_target is true, don't send target parameter
 	if cmdConfig.IgnoreTarget {
@@ -393,6 +383,7 @@ func (m *Manager) buildAgentInfo(name string, agent *Agent) map[string]any {
 			"datacenter":  agent.Details.Datacenter,
 			"test_ip":     agent.Details.TestIP,
 			"description": agent.Details.Description,
+			"group":       agent.Group,
 		},
 		"connection_info": map[string]any{
 			"first_seen":       agent.firstSeen.Format("2006-01-02 15:04:05"),
@@ -423,6 +414,18 @@ func (m *Manager) calculateOfflineDuration(agent *Agent) string {
 
 // GetAgents returns a list of all agents with their status and details
 func (m *Manager) GetAgents() []map[string]any {
+	names, agents := m.getSortedAgents()
+	
+	result := make([]map[string]any, len(names))
+	for i := range names {
+		result[i] = agents[i]
+	}
+	
+	return result
+}
+
+// getSortedAgents returns sorted agent names and their corresponding info maps
+func (m *Manager) getSortedAgents() ([]string, []map[string]any) {
 	m.agentsLock.RLock()
 	defer m.agentsLock.RUnlock()
 
@@ -433,46 +436,55 @@ func (m *Manager) GetAgents() []map[string]any {
 	}
 	sort.Strings(names)
 
-	// Build agent list in sorted order
-	agents := make([]map[string]any, 0, len(m.agents))
+	// Build agent info in sorted order
+	agents := make([]map[string]any, 0, len(names))
 	for _, name := range names {
 		if agent, exists := m.agents[name]; exists {
 			agents = append(agents, m.buildAgentInfo(name, agent))
 		}
 	}
 
-	return agents
+	return names, agents
 }
 
 // GetAgentGroups returns all agents organized by groups
 func (m *Manager) GetAgentGroups() []map[string]any {
-	m.agentsLock.RLock()
-	defer m.agentsLock.RUnlock()
-
-	// Group agents by their group name
-	groups := make(map[string][]map[string]any)
-
-	// Get sorted agent names
-	names := make([]string, 0, len(m.agents))
-	for name := range m.agents {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	// Group agents in sorted order
-	for _, name := range names {
-		if agent, exists := m.agents[name]; exists {
-			groupName := agent.Group
-			if groupName == "" {
-				groupName = "Default"
-			}
-
-			if groups[groupName] == nil {
-				groups[groupName] = make([]map[string]any, 0)
-			}
-
-			groups[groupName] = append(groups[groupName], m.buildAgentInfo(name, agent))
+	names, agents := m.getSortedAgents()
+	
+	// Pre-calculate group count to avoid repeated map allocations
+	groupCount := make(map[string]int, len(names))
+	for i := range names {
+		agentInfo := agents[i]
+		groupName, ok := agentInfo["details"].(map[string]any)["group"]
+		if !ok {
+			groupName = "Default"
 		}
+		groupNameStr, _ := groupName.(string)
+		if groupNameStr == "" {
+			groupNameStr = "Default"
+		}
+		groupCount[groupNameStr] = groupCount[groupNameStr] + 1
+	}
+	
+	// Group agents by their group name with pre-allocated slices
+	groups := make(map[string][]map[string]any, len(groupCount))
+	for i := range names {
+		agentInfo := agents[i]
+		groupName, ok := agentInfo["details"].(map[string]any)["group"]
+		if !ok {
+			groupName = "Default"
+		}
+		
+		groupNameStr, _ := groupName.(string)
+		if groupNameStr == "" {
+			groupNameStr = "Default"
+		}
+		
+		// Pre-allocate slice if not exists
+		if groups[groupNameStr] == nil {
+			groups[groupNameStr] = make([]map[string]any, 0, groupCount[groupNameStr])
+		}
+		groups[groupNameStr] = append(groups[groupNameStr], agentInfo)
 	}
 
 	// Build result with sorted group names
@@ -482,12 +494,12 @@ func (m *Manager) GetAgentGroups() []map[string]any {
 	}
 	sort.Strings(groupNames)
 
-	result := make([]map[string]any, 0, len(groups))
-	for _, groupName := range groupNames {
-		result = append(result, map[string]any{
+	result := make([]map[string]any, len(groupNames))
+	for i, groupName := range groupNames {
+		result[i] = map[string]any{
 			"name":   groupName,
 			"agents": groups[groupName],
-		})
+		}
 	}
 
 	return result
@@ -520,6 +532,20 @@ func (m *Manager) GetAgentCommands(agentName string) []validator.CommandDetail {
 
 // GetAllAvailableCommands returns all unique commands from all connected agents
 func (m *Manager) GetAllAvailableCommands() []validator.CommandDetail {
+	commandMap := m.getAllConnectedAgentCommands()
+	
+	commands := make([]validator.CommandDetail, len(commandMap))
+	i := 0
+	for _, cmd := range commandMap {
+		commands[i] = cmd
+		i++
+	}
+
+	return commands
+}
+
+// getAllConnectedAgentCommands returns command map for all connected agents
+func (m *Manager) getAllConnectedAgentCommands() map[string]validator.CommandDetail {
 	m.agentsLock.RLock()
 	defer m.agentsLock.RUnlock()
 
@@ -539,12 +565,7 @@ func (m *Manager) GetAllAvailableCommands() []validator.CommandDetail {
 		}
 	}
 
-	commands := make([]validator.CommandDetail, 0, len(commandMap))
-	for _, cmd := range commandMap {
-		commands = append(commands, cmd)
-	}
-
-	return commands
+	return commandMap
 }
 
 // CleanupOfflineAgents removes agents that have been offline for more than the specified duration
@@ -552,14 +573,22 @@ func (m *Manager) CleanupOfflineAgents(maxOfflineDuration time.Duration) int {
 	m.agentsLock.Lock()
 	defer m.agentsLock.Unlock()
 
-	var toDelete []string
+	// Pre-allocate slice with estimated size to avoid repeated allocations
+	estimatedCount := len(m.agents) / 3 // Rough estimate that 1/3 might be offline
+	toDelete := make([]string, 0, estimatedCount)
+	actualCount := 0
 	now := time.Now()
 
 	for name, agent := range m.agents {
-		if agent.Status() == StatusDisconnected {
-			if now.Sub(agent.lastConnected) > maxOfflineDuration {
-				toDelete = append(toDelete, name)
+		if agent.Status() == StatusDisconnected && now.Sub(agent.lastConnected) > maxOfflineDuration {
+			if actualCount >= cap(toDelete) {
+				// Expand capacity if needed
+				newSlice := make([]string, len(toDelete), cap(toDelete)*2)
+				copy(newSlice, toDelete)
+				toDelete = newSlice
 			}
+			toDelete = append(toDelete, name)
+			actualCount++
 		}
 	}
 
@@ -568,7 +597,7 @@ func (m *Manager) CleanupOfflineAgents(maxOfflineDuration time.Duration) int {
 		logger.Infof("Cleaned up offline agent: %s", name)
 	}
 
-	return len(toDelete)
+	return actualCount
 }
 
 // GetAgentStats returns statistics about agents
@@ -619,46 +648,6 @@ func buildCommandRequest(commandName, target, commandID string) map[string]any {
 		"target":       target,
 		"command_id":   commandID,
 	}
-}
-
-// incrementCommandQueue increments the active command count for a specific command
-func (m *Manager) incrementCommandQueue(agentName, commandName string) {
-	m.queueLock.Lock()
-	defer m.queueLock.Unlock()
-
-	if m.commandQueues[agentName] == nil {
-		m.commandQueues[agentName] = make(map[string]int)
-	}
-	m.commandQueues[agentName][commandName]++
-}
-
-// decrementCommandQueue decrements the active command count for a specific command
-func (m *Manager) decrementCommandQueue(agentName, commandName string) {
-	m.queueLock.Lock()
-	defer m.queueLock.Unlock()
-
-	if m.commandQueues[agentName] != nil {
-		if m.commandQueues[agentName][commandName] > 0 {
-			m.commandQueues[agentName][commandName]--
-		}
-	}
-}
-
-// checkCommandQueueLimit checks if a command can be executed based on its queue limit
-func (m *Manager) checkCommandQueueLimit(agentName, commandName string, maxQueue int) bool {
-	if maxQueue <= 0 {
-		return true // No limit
-	}
-
-	m.queueLock.RLock()
-	defer m.queueLock.RUnlock()
-
-	if m.commandQueues[agentName] == nil {
-		return true
-	}
-
-	currentCount := m.commandQueues[agentName][commandName]
-	return currentCount < maxQueue
 }
 
 // getCommandConfig returns the command configuration for a specific agent and command

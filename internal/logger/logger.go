@@ -89,13 +89,17 @@ func (l *Logger) GetLevel() LogLevel {
 // Debug logs a debug message
 func (l *Logger) Debug(v ...interface{}) {
 	if l.level <= DEBUG {
-		l.debug.Output(2, fmt.Sprint(v...))
+		if len(v) == 1 {
+			l.debug.Output(2, fmt.Sprint(v[0]))
+		} else {
+			l.debug.Output(2, fmt.Sprint(v...))
+		}
 	}
 }
 
 // Debugf logs a formatted debug message
 func (l *Logger) Debugf(format string, v ...interface{}) {
-	if l.level <= DEBUG {
+	if l.level <= DEBUG && format != "" {
 		l.debug.Output(2, fmt.Sprintf(format, v...))
 	}
 }
@@ -103,13 +107,17 @@ func (l *Logger) Debugf(format string, v ...interface{}) {
 // Info logs an info message
 func (l *Logger) Info(v ...interface{}) {
 	if l.level <= INFO {
-		l.info.Output(2, fmt.Sprint(v...))
+		if len(v) == 1 {
+			l.info.Output(2, fmt.Sprint(v[0]))
+		} else {
+			l.info.Output(2, fmt.Sprint(v...))
+		}
 	}
 }
 
 // Infof logs a formatted info message
 func (l *Logger) Infof(format string, v ...interface{}) {
-	if l.level <= INFO {
+	if l.level <= INFO && format != "" {
 		l.info.Output(2, fmt.Sprintf(format, v...))
 	}
 }
@@ -117,13 +125,17 @@ func (l *Logger) Infof(format string, v ...interface{}) {
 // Warn logs a warning message
 func (l *Logger) Warn(v ...interface{}) {
 	if l.level <= WARN {
-		l.warn.Output(2, fmt.Sprint(v...))
+		if len(v) == 1 {
+			l.warn.Output(2, fmt.Sprint(v[0]))
+		} else {
+			l.warn.Output(2, fmt.Sprint(v...))
+		}
 	}
 }
 
 // Warnf logs a formatted warning message
 func (l *Logger) Warnf(format string, v ...interface{}) {
-	if l.level <= WARN {
+	if l.level <= WARN && format != "" {
 		l.warn.Output(2, fmt.Sprintf(format, v...))
 	}
 }
@@ -131,13 +143,17 @@ func (l *Logger) Warnf(format string, v ...interface{}) {
 // Error logs an error message
 func (l *Logger) Error(v ...interface{}) {
 	if l.level <= ERROR {
-		l.error.Output(2, fmt.Sprint(v...))
+		if len(v) == 1 {
+			l.error.Output(2, fmt.Sprint(v[0]))
+		} else {
+			l.error.Output(2, fmt.Sprint(v...))
+		}
 	}
 }
 
 // Errorf logs a formatted error message
 func (l *Logger) Errorf(format string, v ...interface{}) {
-	if l.level <= ERROR {
+	if l.level <= ERROR && format != "" {
 		l.error.Output(2, fmt.Sprintf(format, v...))
 	}
 }

@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { History, Clock, Server, Target, CheckCircle, XCircle, Trash2, ChevronDown, ChevronRight, Copy } from 'lucide-react';
+import { History, Clock, Server, Target, CheckCircle, XCircle, Trash2, ChevronDown, ChevronRight, Copy, TriangleAlert } from 'lucide-react';
 import { CommandHistory as CommandHistoryType, CommandConfig } from '../types/yals';
 
 interface CommandHistoryProps {
@@ -102,7 +102,9 @@ export const CommandHistory: React.FC<CommandHistoryProps> = React.memo(({
                       {isActive ? (
                         <div className="status-indicator active"></div>
                       ) : hasResponse ? (
-                        isSuccess ? (
+                        item.response?.stopped ? (
+                          <TriangleAlert className="icon-xs text-yellow-500" />
+                        ) : isSuccess ? (
                           <CheckCircle className="icon-xs text-green-500" />
                         ) : (
                           <XCircle className="icon-xs text-red-500" />
@@ -148,8 +150,8 @@ export const CommandHistory: React.FC<CommandHistoryProps> = React.memo(({
                       <span className="status-text running">Running</span>
                     )}
                     {hasResponse && !isActive && (
-                      <span className={`status-text ${isSuccess ? 'success' : 'error'}`}>
-                        {isSuccess ? 'Completed' : 'Failed'}
+                      <span className={`status-text ${item.response?.stopped ? 'stopped' : (isSuccess ? 'success' : 'error')}`}>
+                        {item.response?.stopped ? 'Stopped' : (isSuccess ? 'Completed' : 'Failed')}
                       </span>
                     )}
                   </div>

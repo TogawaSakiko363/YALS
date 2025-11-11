@@ -554,6 +554,10 @@ div[ref="terminalRef"] {
   color: #10b981;
 }
 
+.status-text.stopped {
+  color: #f59e0b;
+}
+
 .status-text.error {
   color: #dc2626;
 }

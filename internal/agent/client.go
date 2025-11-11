@@ -35,8 +35,8 @@ type Client struct {
 // CommandRequest represents a command request from the server
 type CommandRequest struct {
 	Type        string `json:"type"`
-	CommandName string `json:"command_name"` // Command name instead of full command
-	Target      string `json:"target"`       // Target parameter (e.g., IP address)
+	CommandName string `json:"command_name"`
+	Target      string `json:"target"`
 	CommandID   string `json:"command_id"`
 }
 
@@ -48,7 +48,7 @@ type CommandResponse struct {
 	Error      string `json:"error,omitempty"`
 	IsComplete bool   `json:"is_complete"`
 	IsError    bool   `json:"is_error"`
-	OutputMode string `json:"output_mode,omitempty"` // "append" or "replace"
+	OutputMode string `json:"output_mode,omitempty"`
 }
 
 // NewClient creates a new agent client (deprecated, use NewClientWithConfig)
@@ -83,11 +83,11 @@ func (c *Client) ConnectToServer() error {
 	headers := http.Header{}
 	headers.Set("X-Agent-Password", c.config.Server.Password)
 
-	// Create dialer with larger buffers for handshake messages
+	// Create dialer with 64KB buffers
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 10 * time.Second,
-		ReadBufferSize:   65536, // 64KB read buffer
-		WriteBufferSize:  65536, // 64KB write buffer
+		ReadBufferSize:   65536,
+		WriteBufferSize:  65536,
 	}
 
 	logger.Infof("Connecting to server at %s", serverURL)
@@ -167,7 +167,7 @@ func (c *Client) executeCommand(conn *websocket.Conn, req CommandRequest) {
 		return
 	}
 
-	logger.Infof("Executing command: %s", fullCommand)
+	logger.Infof("Executing command: %s", req.CommandID)
 
 	// Check if this is a plugin command
 	if strings.HasPrefix(fullCommand, "plugin:") {
@@ -230,13 +230,8 @@ func (c *Client) prepareCommand(req CommandRequest) (string, *exec.Cmd, error) {
 
 // preparePluginCommand prepares a plugin-based command for execution
 func (c *Client) preparePluginCommand(req CommandRequest, cmdConfig config.CommandTemplate) (string, *exec.Cmd, error) {
-	// This is a special case for plugin commands
-	// We'll create a dummy command that will be handled differently in executeCommand
 	fullCommand := fmt.Sprintf("plugin:%s %s", cmdConfig.UsePlugin, req.Target)
-
-	// Create a dummy command that will be replaced by plugin execution
 	cmd := exec.Command("echo", "plugin_placeholder")
-
 	return fullCommand, cmd, nil
 }
 
@@ -361,6 +356,8 @@ func (c *Client) runCommandWithStreaming(conn *websocket.Conn, commandID string,
 		c.sendOutput(conn, commandID, fmt.Sprintf("Command failed: %v", cmdErr), true)
 	}
 
+	time.Sleep(50 * time.Millisecond)
+
 	return nil
 }
 
@@ -385,8 +382,7 @@ func (c *Client) accumulateOutput(pipe interface{ Read([]byte) (int, error) }, l
 
 // isComplexCommand checks if a command needs shell execution
 func (c *Client) isComplexCommand(fullCommand string) bool {
-	// Use first 3 operators for complexity check (pipes and logical operators)
-	complexOperators := shellOperators[:3] // |, &&, ||
+	complexOperators := shellOperators[:3]
 	for _, op := range complexOperators {
 		if strings.Contains(fullCommand, op) {
 			return true
@@ -397,13 +393,11 @@ func (c *Client) isComplexCommand(fullCommand string) bool {
 
 // stopCommand stops a running command
 func (c *Client) stopCommand(commandID string) {
-	// First try to stop plugin command
 	if plugin.StopPluginCommand(commandID) {
-		logger.Infof("Stopping plugin command: %s", commandID)
+		logger.Infof("Stopping command: %s", commandID)
 		return
 	}
 
-	// Then try traditional command
 	c.commandsLock.Lock()
 	defer c.commandsLock.Unlock()
 
@@ -413,7 +407,7 @@ func (c *Client) stopCommand(commandID string) {
 		return
 	}
 
-	logger.Infof("Stopping command: %s", activeCmd.FullCommand)
+	logger.Infof("Stopping command: %s", commandID)
 
 	// Determine timeout based on command complexity
 	timeout := 1 * time.Second
@@ -456,19 +450,14 @@ func (c *Client) sendCommandResponseWithMode(conn *websocket.Conn, commandID, ou
 	}
 }
 
-// sendOutput sends command output to the server (now uses replace mode by default)
+// sendOutput sends command output to the server (uses replace mode by default)
 func (c *Client) sendOutput(conn *websocket.Conn, commandID, output string, isError bool) {
-	c.sendCommandResponseWithMode(conn, commandID, output, "", false, isError, "replace")
-}
-
-// sendOutputReplace sends command output to the server with replace mode
-func (c *Client) sendOutputReplace(conn *websocket.Conn, commandID, output string, isError bool) {
 	c.sendCommandResponseWithMode(conn, commandID, output, "", false, isError, "replace")
 }
 
 // sendError sends an error message to the server
 func (c *Client) sendError(conn *websocket.Conn, commandID, errorMsg string) {
-	c.sendCommandResponse(conn, commandID, "", errorMsg, true, true)
+	c.sendCommandResponse(conn, commandID, errorMsg, errorMsg, true, true)
 }
 
 // sendCompletion sends a completion message to the server
@@ -481,8 +470,6 @@ func isClosedPipeError(err error) bool {
 	if err == nil {
 		return false
 	}
-
-	// Check common pipe closed error messages
 	errStr := err.Error()
 	return strings.Contains(errStr, "file already closed") ||
 		strings.Contains(errStr, "broken pipe") ||
@@ -492,33 +479,26 @@ func isClosedPipeError(err error) bool {
 
 // executePluginCommand executes a plugin-based command
 func (c *Client) executePluginCommand(conn *websocket.Conn, req CommandRequest, fullCommand string) {
-	// Extract plugin name from fullCommand (format: "plugin:pluginname target")
 	parts := strings.SplitN(fullCommand, " ", 2)
 	if len(parts) < 1 {
 		c.sendError(conn, req.CommandID, "invalid plugin command format")
 		return
 	}
 
-	pluginPart := parts[0]
-	pluginName := strings.TrimPrefix(pluginPart, "plugin:")
-
-	// Create a dummy command for tracking purposes
+	pluginName := strings.TrimPrefix(parts[0], "plugin:")
 	dummyCmd := exec.Command("echo", "plugin_execution")
 
-	// Store plugin command for stop functionality
 	c.storeActiveCommand(req.CommandID, dummyCmd, fullCommand)
 	defer c.removeActiveCommand(req.CommandID)
 
-	// Execute plugin directly
 	err := plugin.ExecutePluginCommand(pluginName, req.Target, req.CommandID, func(output string, isError bool, isComplete bool) {
 		if isError {
 			c.sendError(conn, req.CommandID, output)
 		} else if isComplete {
-			c.sendOutputReplace(conn, req.CommandID, output, false)
+			c.sendOutput(conn, req.CommandID, output, false)
 			c.sendCompletion(conn, req.CommandID)
 		} else {
-			// Use replace mode for streaming updates to avoid accumulation
-			c.sendOutputReplace(conn, req.CommandID, output, false)
+			c.sendOutput(conn, req.CommandID, output, false)
 		}
 	})
 

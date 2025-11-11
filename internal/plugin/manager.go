@@ -187,8 +187,70 @@ func SanitizeTarget(target string) string {
 	return target
 }
 
+// GetPluginIgnoreTarget checks if a plugin overrides ignore_target setting
+// Returns (hasOverride bool, ignoreTarget bool)
+func GetPluginIgnoreTarget(pluginName string) (bool, bool) {
+	manager := GetManager()
+	plugin, exists := manager.GetPlugin(pluginName)
+	if !exists {
+		return false, false
+	}
+
+	// Check if plugin implements PluginWithConfig
+	if configPlugin, ok := plugin.(PluginWithConfig); ok {
+		return true, configPlugin.GetIgnoreTarget()
+	}
+
+	return false, false
+}
+
+// GetPluginMaximumQueue checks if a plugin overrides maximum_queue setting
+// Returns (hasOverride bool, maximumQueue int)
+func GetPluginMaximumQueue(pluginName string) (bool, int) {
+	manager := GetManager()
+	plugin, exists := manager.GetPlugin(pluginName)
+	if !exists {
+		return false, 0
+	}
+
+	// Check if plugin implements PluginWithConfig
+	if configPlugin, ok := plugin.(PluginWithConfig); ok {
+		return true, configPlugin.GetMaximumQueue()
+	}
+
+	return false, 0
+}
+
+// CheckPluginQueueLimit checks if a plugin can accept a new execution
+// Returns (canExecute bool, customMessage string)
+func CheckPluginQueueLimit(pluginName string) (bool, string) {
+	manager := GetManager()
+	plugin, exists := manager.GetPlugin(pluginName)
+	if !exists {
+		return true, "" // Plugin not found, allow execution (will fail later)
+	}
+
+	// Check if plugin implements PluginWithQueueControl
+	if queuePlugin, ok := plugin.(PluginWithQueueControl); ok {
+		return queuePlugin.CheckQueueLimit()
+	}
+
+	// Plugin doesn't implement queue control, allow execution
+	return true, ""
+}
+
 // ExecutePluginCommand executes a plugin command with WebSocket connection
 func ExecutePluginCommand(pluginName, target, commandID string, callback StreamingCallback) error {
+	// Check plugin queue limit before execution
+	canExecute, customMessage := CheckPluginQueueLimit(pluginName)
+	if !canExecute {
+		// Plugin denied execution with custom message
+		if callback != nil {
+			callback(customMessage, true, true)
+		}
+		return nil // Return nil because we handled the error via callback
+	}
+
 	manager := GetManager()
 	return manager.ExecutePluginStreamingWithID(pluginName, target, commandID, callback)
 }

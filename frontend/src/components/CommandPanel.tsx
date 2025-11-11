@@ -10,7 +10,6 @@ interface CommandPanelProps {
   onStopCommand?: () => void;
   latestOutput?: string | null;
   streamingOutputs?: Map<string, string>;
-  currentCommandId?: string | null;
   commands: CommandConfig[];
 }
 
@@ -29,7 +28,6 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
   onStopCommand,
   latestOutput,
   streamingOutputs,
-  currentCommandId,
   commands
 }) => {
   const [selectedCommand, setSelectedCommand] = useState<CommandType>('ping');
@@ -290,19 +288,24 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
         {/* Terminal Content */}
         <div className="terminal-content">
           {(() => {
-            // Get current command output
-            const streamingOutput = currentCommandId ? streamingOutputs?.get(currentCommandId) : undefined;
-            const isStreaming = currentCommandId ? activeCommands.has(currentCommandId) : false;
+            // Find streaming output from any active command
+            let streamingOutput: string | undefined;
+            if (streamingOutputs && streamingOutputs.size > 0) {
+              // Get the first (most recent) streaming output
+              const outputs = Array.from(streamingOutputs.values());
+              if (outputs.length > 0) {
+                streamingOutput = outputs[outputs.length - 1]; // Get last one (most recent)
+              }
+            }
             
-            // Prioritize streaming output, show final output if no streaming output
+
+            
+            // Prioritize streaming output, then latestOutput
             let displayOutput: string | null | undefined;
-            if (isStreaming && streamingOutput !== undefined && streamingOutput !== '') {
+            if (streamingOutput !== undefined && streamingOutput !== '') {
               displayOutput = streamingOutput;
             } else if (latestOutput !== null && latestOutput !== undefined && latestOutput !== '') {
               displayOutput = latestOutput;
-            } else if (streamingOutput !== undefined && streamingOutput !== '') {
-              // When command completes but no final output, show streaming output content
-              displayOutput = streamingOutput;
             } else {
               displayOutput = null;
             }
