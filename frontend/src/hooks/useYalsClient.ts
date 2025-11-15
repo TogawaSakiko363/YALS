@@ -450,7 +450,12 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
             // Small delay to ensure streamingOutputs state is updated
             setTimeout(() => {
               // Get the final output from streaming outputs using real command ID
-              const finalOutput = streamingOutputs.get(realCommandId) || latestOutput || '';
+              let finalOutput = streamingOutputs.get(realCommandId) || latestOutput || '';
+              
+              // If command failed and there's an error message, use it as output
+              if (!response.success && response.error && !finalOutput) {
+                finalOutput = response.error;
+              }
 
               const commandResponse: CommandResponse = {
                 success: response.success,
@@ -532,12 +537,17 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
               socketRef.current.onclose = originalOnClose;
             }
 
+            // If command failed and there's an error message, use it as output
+            const finalOutput = !response.success && response.error && !response.output 
+              ? response.error 
+              : response.output;
+
             const commandResponse: CommandResponse = {
               success: response.success,
               command: response.command,
               target: response.target,
               agent: response.agent,
-              output: response.output,
+              output: finalOutput,
               error: response.error,
               timestamp: Date.now()
             };
@@ -576,6 +586,10 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       newMap.delete(commandId);
       return newMap;
     });
+  }, []);
+
+  const clearAllStreamingOutputs = useCallback(() => {
+    setStreamingOutputs(new Map());
   }, []);
 
   const getAgentCommands = useCallback((agentName: string) => {
@@ -657,6 +671,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     executeCommand,
     clearHistory,
     clearStreamingOutput,
+    clearAllStreamingOutputs,
     stopCommand
   };
 };

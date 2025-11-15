@@ -204,7 +204,17 @@ func (m *Manager) handleCommandOutput(msg map[string]any) {
 			IsComplete: isComplete,
 		}:
 		default:
-			// Channel is full, skip this output
+			// Channel is full, log warning but try to send anyway with timeout
+			logger.Warnf("Output channel full for command %s, attempting to send with timeout", commandID)
+			select {
+			case handler <- CommandOutput{
+				Output:     output,
+				IsError:    isError,
+				IsComplete: isComplete,
+			}:
+			case <-time.After(5 * time.Second):
+				logger.Errorf("Failed to send output for command %s after timeout, output may be lost", commandID)
+			}
 		}
 	}
 }
@@ -322,8 +332,8 @@ func (m *Manager) ExecuteCommandStreamingWithStopAndID(agentName, command, comma
 		target = ""
 	}
 
-	// Create a channel to receive command output
-	outputChan := make(chan CommandOutput, 100)
+	// Create a channel to receive command output with larger buffer to prevent output loss
+	outputChan := make(chan CommandOutput, 1000)
 	defer close(outputChan)
 
 	// Register output handler
@@ -415,12 +425,12 @@ func (m *Manager) calculateOfflineDuration(agent *Agent) string {
 // GetAgents returns a list of all agents with their status and details
 func (m *Manager) GetAgents() []map[string]any {
 	names, agents := m.getSortedAgents()
-	
+
 	result := make([]map[string]any, len(names))
 	for i := range names {
 		result[i] = agents[i]
 	}
-	
+
 	return result
 }
 
@@ -450,7 +460,7 @@ func (m *Manager) getSortedAgents() ([]string, []map[string]any) {
 // GetAgentGroups returns all agents organized by groups
 func (m *Manager) GetAgentGroups() []map[string]any {
 	names, agents := m.getSortedAgents()
-	
+
 	// Pre-calculate group count to avoid repeated map allocations
 	groupCount := make(map[string]int, len(names))
 	for i := range names {
@@ -465,7 +475,7 @@ func (m *Manager) GetAgentGroups() []map[string]any {
 		}
 		groupCount[groupNameStr] = groupCount[groupNameStr] + 1
 	}
-	
+
 	// Group agents by their group name with pre-allocated slices
 	groups := make(map[string][]map[string]any, len(groupCount))
 	for i := range names {
@@ -474,12 +484,12 @@ func (m *Manager) GetAgentGroups() []map[string]any {
 		if !ok {
 			groupName = "Default"
 		}
-		
+
 		groupNameStr, _ := groupName.(string)
 		if groupNameStr == "" {
 			groupNameStr = "Default"
 		}
-		
+
 		// Pre-allocate slice if not exists
 		if groups[groupNameStr] == nil {
 			groups[groupNameStr] = make([]map[string]any, 0, groupCount[groupNameStr])
@@ -533,7 +543,7 @@ func (m *Manager) GetAgentCommands(agentName string) []validator.CommandDetail {
 // GetAllAvailableCommands returns all unique commands from all connected agents
 func (m *Manager) GetAllAvailableCommands() []validator.CommandDetail {
 	commandMap := m.getAllConnectedAgentCommands()
-	
+
 	commands := make([]validator.CommandDetail, len(commandMap))
 	i := 0
 	for _, cmd := range commandMap {

@@ -27,6 +27,7 @@ function App() {
     executeCommand,
     setSelectedAgent,
     clearHistory,
+    clearAllStreamingOutputs,
     stopCommand
   } = useYalsClient();
 
@@ -43,6 +44,7 @@ function App() {
   const handleExecuteCommand = useCallback(async (command: CommandType, target: string) => {
     try {
       setLatestOutput(null); // Clear previous output
+      clearAllStreamingOutputs(); // Clear all streaming outputs to prevent stale data
       
       const { response } = await executeCommand(command, target);
       
@@ -52,7 +54,7 @@ function App() {
       console.error('Command execution failed:', error);
       setLatestOutput(error.message || 'Command execution failed');
     }
-  }, [executeCommand]);
+  }, [executeCommand, clearAllStreamingOutputs]);
 
   const handleStopCommand = useCallback(() => {
     // Find the first active command and stop it
@@ -61,6 +63,11 @@ function App() {
       stopCommand(firstActiveCommand);
     }
   }, [activeCommands, stopCommand]);
+
+  const handleClearOutput = useCallback(() => {
+    setLatestOutput(null);
+    clearAllStreamingOutputs();
+  }, [clearAllStreamingOutputs]);
 
   return (
     <div className="app-container" style={{ backgroundColor: config.backgroundColor }}>
@@ -108,6 +115,7 @@ function App() {
                 activeCommands={activeCommands}
                 onExecuteCommand={handleExecuteCommand}
                 onStopCommand={handleStopCommand}
+                onClearOutput={handleClearOutput}
                 latestOutput={latestOutput}
                 streamingOutputs={streamingOutputs}
                 commands={commands}

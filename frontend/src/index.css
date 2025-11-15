@@ -437,7 +437,8 @@ div[ref="terminalRef"] {
 }
 
 .history-item-header {
-  padding: 12px;
+  padding: 0.75rem;
+  /* 12px / 16px = 0.75rem */
   cursor: pointer;
   display: flex;
   justify-content: space-between;
@@ -602,25 +603,6 @@ div[ref="terminalRef"] {
   background-color: #e5e7eb;
 }
 
-.result-output-container {
-  min-height: 3.125rem;
-  /* 50px / 16px = 3.125rem */
-}
-
-@media (min-width: 640px) {
-  .result-output-container {
-    min-height: 6.25rem;
-    /* 100px / 16px = 6.25rem */
-  }
-}
-
-@media (min-width: 768px) {
-  .result-output-container {
-    min-height: 9.375rem;
-    /* 150px / 16px = 9.375rem */
-  }
-}
-
 .result-output {
   background-color: #1f2937;
   color: #4ade80;
@@ -638,6 +620,8 @@ div[ref="terminalRef"] {
   text-indent: 0;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
+  max-height: 28.125rem;
+  /* 450px / 16px = 28.125rem - limit maximum height */
 }
 
 .error-title {
@@ -860,8 +844,9 @@ div[ref="terminalRef"] {
 
 .command-select:focus {
   outline: none;
-  ring: 1px solid #3b82f6;
-  border-color: transparent;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 0.1875rem rgba(59, 130, 246, 0.1);
+  /* 3px / 16px = 0.1875rem */
 }
 
 .command-target-container {
@@ -884,8 +869,9 @@ div[ref="terminalRef"] {
 
 .command-target-input:focus {
   outline: none;
-  ring: 1px solid #3b82f6;
-  border-color: transparent;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 0.1875rem rgba(59, 130, 246, 0.1);
+  /* 3px / 16px = 0.1875rem */
 }
 
 .command-button-container {

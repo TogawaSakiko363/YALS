@@ -8,6 +8,7 @@ interface CommandPanelProps {
   activeCommands: Set<string>;
   onExecuteCommand: (command: CommandType, target: string) => Promise<void>;
   onStopCommand?: () => void;
+  onClearOutput?: () => void;
   latestOutput?: string | null;
   streamingOutputs?: Map<string, string>;
   commands: CommandConfig[];
@@ -75,7 +76,7 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
     }
   }, [commandOptions, selectedCommand, target, selectedAgent, isConnected, onExecuteCommand]);
 
-  const handleKeyPress = useCallback((e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleExecute();
@@ -104,6 +105,24 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
     [activeCommands, commandId]
   );
 
+  // Get display output - memoized to avoid recalculation
+  const displayOutput = useMemo(() => {
+    if (streamingOutputs && streamingOutputs.size > 0) {
+      const outputs = Array.from(streamingOutputs.values());
+      const streamingOutput = outputs[outputs.length - 1];
+      if (streamingOutput) return streamingOutput;
+    }
+    if (latestOutput) return latestOutput;
+    return null;
+  }, [streamingOutputs, latestOutput]);
+
+  const outputText = useMemo(() => {
+    if (!displayOutput) {
+      return 'Please select command type and target address above, then click "Run" to start testing';
+    }
+    return displayOutput.length > 0 ? displayOutput : 'Command execution completed with no output';
+  }, [displayOutput]);
+
   return (
     <div className="command-panel-container">
       {/* Command Panel container */}
@@ -123,13 +142,11 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
 
           {hasCommands && (
             <div className="space-y-3">
-              {/* Large screen layout: horizontal arrangement */}
+              {/* Desktop layout: horizontal arrangement */}
               <div className="command-actions-desktop">
                 {/* Command selection dropdown */}
                 <div className="command-select-container">
-                  <label className="command-label">
-                    Command Type
-                  </label>
+                  <label className="command-label">Command Type</label>
                   <select
                     value={selectedCommand}
                     onChange={(e) => setSelectedCommand(e.target.value as CommandType)}
@@ -146,15 +163,15 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
 
                 {/* Target input - takes remaining space */}
                 <div className="command-target-container">
-                  <label htmlFor="target" className="command-label">
+                  <label htmlFor="target-desktop" className="command-label">
                     Target Address
                   </label>
                   <input
-                    id="target"
+                    id="target-desktop"
                     type="text"
                     value={requiresTarget ? target : ''}
                     onChange={(e) => requiresTarget && setTarget(e.target.value)}
-                    onKeyPress={requiresTarget ? handleKeyPress : undefined}
+                    onKeyDown={requiresTarget ? handleKeyDown : undefined}
                     placeholder={requiresTarget ? "Enter the target" : "No target required"}
                     className="command-target-input"
                     disabled={!requiresTarget || !isConnected || !selectedAgent || isCommandActive}
@@ -185,14 +202,12 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
                   </button>
                 </div>
               </div>
-              
-              {/* Small screen layout: vertical arrangement */}
+
+              {/* Mobile layout: vertical arrangement */}
               <div className="command-actions-mobile">
                 {/* Command selection dropdown */}
                 <div>
-                  <label className="command-label">
-                    Command Type
-                  </label>
+                  <label className="command-label">Command Type</label>
                   <select
                     value={selectedCommand}
                     onChange={(e) => setSelectedCommand(e.target.value as CommandType)}
@@ -209,15 +224,15 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
 
                 {/* Target input */}
                 <div>
-                  <label htmlFor="target" className="command-label">
+                  <label htmlFor="target-mobile" className="command-label">
                     Target Address
                   </label>
                   <input
-                    id="target"
+                    id="target-mobile"
                     type="text"
                     value={requiresTarget ? target : ''}
                     onChange={(e) => requiresTarget && setTarget(e.target.value)}
-                    onKeyPress={requiresTarget ? handleKeyPress : undefined}
+                    onKeyDown={requiresTarget ? handleKeyDown : undefined}
                     placeholder={requiresTarget ? "Enter the target" : "No target required"}
                     className="command-target-input"
                     disabled={!requiresTarget || !isConnected || !selectedAgent || isCommandActive}
@@ -287,37 +302,7 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
 
         {/* Terminal Content */}
         <div className="terminal-content">
-          {(() => {
-            // Find streaming output from any active command
-            let streamingOutput: string | undefined;
-            if (streamingOutputs && streamingOutputs.size > 0) {
-              // Get the first (most recent) streaming output
-              const outputs = Array.from(streamingOutputs.values());
-              if (outputs.length > 0) {
-                streamingOutput = outputs[outputs.length - 1]; // Get last one (most recent)
-              }
-            }
-            
-
-            
-            // Prioritize streaming output, then latestOutput
-            let displayOutput: string | null | undefined;
-            if (streamingOutput !== undefined && streamingOutput !== '') {
-              displayOutput = streamingOutput;
-            } else if (latestOutput !== null && latestOutput !== undefined && latestOutput !== '') {
-              displayOutput = latestOutput;
-            } else {
-              displayOutput = null;
-            }
-            
-            if (displayOutput === null || displayOutput === undefined) {
-              return 'Please select command type and target address above, then click "Run" to start testing';
-            } else if (displayOutput && displayOutput.length > 0) {
-              return displayOutput;
-            } else {
-              return 'Command execution completed with no output';
-            }
-          })()}
+          {outputText}
         </div>
       </div>
     </div>

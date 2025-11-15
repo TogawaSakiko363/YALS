@@ -41,6 +41,12 @@ type Config struct {
 		MaxRetries          int `yaml:"max_retries"`
 		DeleteOfflineAgents int `yaml:"delete_offline_agents"`
 	} `yaml:"connection"`
+
+	RateLimit struct {
+		Enabled     bool `yaml:"enabled"`
+		MaxCommands int  `yaml:"max_commands"`
+		TimeWindow  int  `yaml:"time_window"`
+	} `yaml:"rate_limit"`
 }
 
 // AgentDetails represents additional agent information

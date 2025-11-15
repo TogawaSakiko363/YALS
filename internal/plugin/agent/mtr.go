@@ -359,7 +359,7 @@ func (p *MTRPlugin) formatMTRResult(result *MTRResult) string {
 	var output strings.Builder
 
 	// Header
-	output.WriteString("Hop  Host                        Loss%  Snt  Last   Avg    Best   Wrst   StDev\n")
+	output.WriteString("Hop  Host                        Loss%  Snt    Last   Avg    Best   Wrst   StDev\n")
 
 	// Get sorted TTL list
 	ttls := make([]int, 0, len(result.Hops))

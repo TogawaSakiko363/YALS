@@ -2,7 +2,7 @@
 
 # Application settings
 app:
-  version: "3.0.0-stable"
+  version: "3.0.0-final"
 
 # Server settings
 server:
@@ -26,4 +26,11 @@ connection:
   retry_interval: 15  # seconds
   max_retries: 0 #  set to 0 to always retry
   delete_offline_agents: 86400  # seconds (24 hours), set to 0 to never delete
+
+# Rate limiting settings
+rate_limit:
+  enabled: true      # Enable/disable rate limiting
+  max_commands: 2    # Maximum number of commands allowed
+  time_window: 10    # Time window in seconds
+
 

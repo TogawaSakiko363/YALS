@@ -7,13 +7,13 @@ export const config = {
   footerRightText: '© 2025 Example Networks, LLC.',
   
   // Web icon path, please put image files in public/images directory
-  faviconPath: '/images/favicon.ico',
+  faviconPath: '/images/Example.ico',
   
   // Web top-left logo path, please put image files in public/images directory
-  logoPath: '/images/Example.svg',
+  logoPath: '/images/Example.png',
   
   // Web background color
-  backgroundColor: '#ffffff'
+  backgroundColor: '#f5f5f5ff'
 };
 
 // Export type definition for TypeScript type checking
