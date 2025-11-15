@@ -2,6 +2,8 @@
 
 This project is licensed under the [MIT License](LICENSE.md), meaning you are free to use, copy, modify, merge, publish, distribute, sublicense, and even sell the software. However, we also offer customization, maintenance, and hosting services. We can provide you with higher-priority enterprise-level software updates, which will greatly contribute to the sustainable development of our project. We also welcome your financial support for this project. Please contact us for more details.
 
+*** Important *** Version 3.0.0-final is the last version available for open source use. Starting with version 4.0.0, we will no longer provide open source code. This does not mean that YALS will no longer provide open source updates, but rather that in order to allow this project to develop better, we will still release necessary updates based on version 3.0.0-final from time to time, including useful plugin modules. We welcome users who need to use it to contact us for details and pricing of the 4.0.0+ commercial version.
+
 Telegram: @AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 
 ## Overview
