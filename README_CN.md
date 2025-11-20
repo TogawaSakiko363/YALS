@@ -85,7 +85,7 @@ commands:
     description: "网络连通性测试"
   
   mtr:
-    use_plugin: "mtr"
+    use_plugin: "mtr" # 插件功能仅限商业版本可用
     description: "网络路由分析"
 ```
 
