@@ -49,6 +49,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
   });
   const [activeCommands, setActiveCommands] = useState<Set<string>>(new Set());
   const [streamingOutputs, setStreamingOutputs] = useState<Map<string, string>>(new Map());
+  const [commandIdMapping, setCommandIdMapping] = useState<Map<string, string>>(new Map()); // Map simple ID to real backend ID
 
 
 
@@ -143,6 +144,33 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
         // Handle streaming command output
         const commandId = `${message.command}-${message.target}-${message.agent}`;
 
+        // Update streaming output first (even if complete, to handle stopped messages)
+        if (message.output || message.error) {
+          setStreamingOutputs(prev => {
+            const newMap = new Map(prev);
+            const currentOutput = newMap.get(commandId) || '';
+            
+            // Check output mode - default to "replace" for better user experience
+            const outputMode = message.output_mode || 'replace';
+            
+            let newOutput: string;
+            if (outputMode === 'replace') {
+              // Replace mode: use new output directly
+              newOutput = message.error || message.output || '';
+            } else {
+              // Append mode: accumulate output (for stopped messages)
+              // Don't add extra newline if output already starts with newline
+              const separator = message.output && message.output.startsWith('\n') ? '' : (currentOutput ? '\n' : '');
+              newOutput = message.error ?
+                currentOutput + separator + message.error :
+                currentOutput + message.output;
+            }
+            
+            newMap.set(commandId, newOutput);
+            return newMap;
+          });
+        }
+
         if (message.is_complete) {
           // Command completed
           setActiveCommands(prev => {
@@ -153,17 +181,6 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
 
           // Don't update command history here, let executeCommand handle it
           // The history will be updated when executeCommand resolves with the final output
-        } else {
-          // Streaming output chunk
-          setStreamingOutputs(prev => {
-            const newMap = new Map(prev);
-            const currentOutput = newMap.get(commandId) || '';
-            const newOutput = message.error ?
-              currentOutput + (currentOutput ? '\n' : '') + message.error :
-              currentOutput + (currentOutput ? '\n' : '') + message.output;
-            newMap.set(commandId, newOutput);
-            return newMap;
-          });
         }
       } else if (message.command) {
         // Handle command response
@@ -230,7 +247,17 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     return new Promise<void>((resolve, reject) => {
       try {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${serverUrl}/ws`;
+        
+        // Generate or retrieve session ID
+        let sessionId = sessionStorage.getItem('yals_session_id');
+        if (!sessionId) {
+          // Generate a new session ID: timestamp + random string
+          sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+          sessionStorage.setItem('yals_session_id', sessionId);
+        }
+        
+        // Include session ID in WebSocket URL path
+        const wsUrl = `${protocol}//${serverUrl}/ws/${sessionId}`;
 
         const socket = new WebSocket(wsUrl);
 
@@ -297,7 +324,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     reconnectAttemptsRef.current = maxReconnectAttempts; // Prevent auto-reconnection
   }, [maxReconnectAttempts]);
 
-  const executeCommand = useCallback(async (command: CommandType, target: string): Promise<CommandResponse> => {
+  const executeCommand = useCallback(async (command: CommandType, target: string): Promise<{ response: CommandResponse; realCommandId: string }> => {
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
       throw new Error('WebSocket not connected');
     }
@@ -315,28 +342,24 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     }
 
     const trimmedTarget = requiresTarget ? target.trim() : '';
-    const commandId = `${command}-${trimmedTarget}-${selectedAgent}`;
+    const simpleCommandId = `${command}-${trimmedTarget}-${selectedAgent}`;
+    
+    // Real command ID will be received from backend
+    let realCommandId = '';
 
-    // Add to active commands set
-    setActiveCommands(prev => new Set(prev).add(commandId));
+    // Add to active commands set using simple ID
+    setActiveCommands(prev => new Set(prev).add(simpleCommandId));
 
-    // Clear previous streaming output
-    setStreamingOutputs(prev => {
-      const newMap = new Map(prev);
-      newMap.delete(commandId);
-      return newMap;
-    });
-
-    // Add to history
+    // Add to history using simple ID initially
     const historyEntry: CommandHistory = {
-      id: commandId,
+      id: simpleCommandId,
       command,
       target: trimmedTarget,
       agent: selectedAgent,
       timestamp: Date.now()
     };
 
-    setCommandHistory(prev => [historyEntry, ...prev.filter(h => h.id !== commandId)]);
+    setCommandHistory(prev => [historyEntry, ...prev.filter(h => h.id !== simpleCommandId)]);
 
     const request = {
       type: 'execute_command',
@@ -346,7 +369,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     };
 
     return new Promise((resolve, reject) => {
-      let accumulatedOutput = ''; // Accumulate output within Promise
+      let latestOutput = ''; // Store only the latest output frame
 
       // No artificial timeout - let the command run as long as WebSocket connection is alive
       // The command will complete when the backend sends is_complete=true or connection is lost
@@ -355,14 +378,16 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       const connectionLostHandler = () => {
         setActiveCommands(prev => {
           const newSet = new Set(prev);
-          newSet.delete(commandId);
+          newSet.delete(simpleCommandId);
           return newSet;
         });
-        setStreamingOutputs(prev => {
-          const newMap = new Map(prev);
-          newMap.delete(commandId);
-          return newMap;
-        });
+        if (realCommandId) {
+          setStreamingOutputs(prev => {
+            const newMap = new Map(prev);
+            newMap.delete(realCommandId);
+            return newMap;
+          });
+        }
         reject(new Error('Connection lost during command execution'));
       };
 
@@ -389,12 +414,22 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
             response.target === trimmedTarget &&
             !response.is_complete) {
 
-            // Accumulate output
+            // Store latest output frame (replace mode)
             if (response.output) {
-              accumulatedOutput += (accumulatedOutput ? '\n' : '') + response.output;
+              latestOutput = response.output;
             }
             if (response.error) {
-              accumulatedOutput += (accumulatedOutput ? '\n' : '') + response.error;
+              latestOutput = response.error;
+            }
+            
+            // Store real command ID from backend for stop functionality and output tracking
+            if (response.command_id && !realCommandId) {
+              realCommandId = response.command_id;
+              setCommandIdMapping(prev => {
+                const newMap = new Map(prev);
+                newMap.set(simpleCommandId, response.command_id);
+                return newMap;
+              });
             }
           }
 
@@ -412,47 +447,81 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
               socketRef.current.onclose = originalOnClose;
             }
 
-            const commandResponse: CommandResponse = {
-              success: response.success,
-              command: response.command,
-              target: response.target,
-              agent: response.agent,
-              output: accumulatedOutput, // Use accumulated output
-              error: response.error,
-              timestamp: Date.now()
-            };
-
-            // Update command history with final result
-            setCommandHistory(prev => {
-              const existingIndex = prev.findIndex(h => h.id === commandId);
-              if (existingIndex >= 0) {
-                const updated = [...prev];
-                // Check if it's a stopped state
-                const finalResponse = {
-                  ...commandResponse,
-                  // If error message is "cancelled", mark as cancelled state
-                  output: commandResponse.error === 'Cancelled' ?
-                    (accumulatedOutput + '\n*** Stopped ***') :
-                    commandResponse.output
-                };
-
-                updated[existingIndex] = {
-                  ...updated[existingIndex],
-                  response: finalResponse
-                };
-
-                // Save to localStorage
-                setLocalStorage('yals_command_history', JSON.stringify(updated.slice(0, 100)));
-                return updated;
+            // Small delay to ensure streamingOutputs state is updated
+            setTimeout(() => {
+              // Get the final output from streaming outputs using real command ID
+              let finalOutput = streamingOutputs.get(realCommandId) || latestOutput || '';
+              
+              // If command failed and there's an error message, use it as output
+              if (!response.success && response.error && !finalOutput) {
+                finalOutput = response.error;
               }
-              return prev;
-            });
 
-            if (response.success) {
-              resolve(commandResponse);
-            } else {
-              reject(new Error(response.error || 'Command execution failed'));
-            }
+              const commandResponse: CommandResponse = {
+                success: response.success,
+                command: response.command,
+                target: response.target,
+                agent: response.agent,
+                output: finalOutput,
+                error: response.error,
+                timestamp: Date.now(),
+                stopped: response.stopped || false
+              };
+
+              // Update command history with final result
+              setCommandHistory(prev => {
+                const existingIndex = prev.findIndex(h => h.id === simpleCommandId);
+                if (existingIndex >= 0) {
+                  const updated = [...prev];
+                  const finalResponse = {
+                    ...commandResponse,
+                    output: finalOutput,
+                    stopped: response.stopped || false
+                  };
+
+                  updated[existingIndex] = {
+                    ...updated[existingIndex],
+                    response: finalResponse
+                  };
+
+                  // Save to localStorage
+                  setLocalStorage('yals_command_history', JSON.stringify(updated.slice(0, 100)));
+                  return updated;
+                }
+                return prev;
+              });
+
+              // Clean up active commands
+              setActiveCommands(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(simpleCommandId);
+                return newSet;
+              });
+
+              // Clean up streaming output
+              if (realCommandId) {
+                setStreamingOutputs(prev => {
+                  const newMap = new Map(prev);
+                  newMap.delete(realCommandId);
+                  return newMap;
+                });
+              }
+
+              // Clean up command ID mapping
+              setCommandIdMapping(prev => {
+                const newMap = new Map(prev);
+                newMap.delete(simpleCommandId);
+                return newMap;
+              });
+
+              if (response.success && !response.stopped) {
+                resolve({ response: commandResponse, realCommandId });
+              } else if (response.stopped) {
+                resolve({ response: commandResponse, realCommandId });
+              } else {
+                reject(new Error(response.error || 'Command execution failed'));
+              }
+            }, 50); // 50ms delay to ensure state update
           }
 
           // Handle legacy non-streaming response (fallback)
@@ -468,18 +537,30 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
               socketRef.current.onclose = originalOnClose;
             }
 
+            // If command failed and there's an error message, use it as output
+            const finalOutput = !response.success && response.error && !response.output 
+              ? response.error 
+              : response.output;
+
             const commandResponse: CommandResponse = {
               success: response.success,
               command: response.command,
               target: response.target,
               agent: response.agent,
-              output: response.output,
+              output: finalOutput,
               error: response.error,
               timestamp: Date.now()
             };
 
+            // Clean up
+            setActiveCommands(prev => {
+              const newSet = new Set(prev);
+              newSet.delete(simpleCommandId);
+              return newSet;
+            });
+
             if (response.success) {
-              resolve(commandResponse);
+              resolve({ response: commandResponse, realCommandId: realCommandId || simpleCommandId });
             } else {
               reject(new Error(response.error || 'Command execution failed'));
             }
@@ -507,6 +588,10 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     });
   }, []);
 
+  const clearAllStreamingOutputs = useCallback(() => {
+    setStreamingOutputs(new Map());
+  }, []);
+
   const getAgentCommands = useCallback((agentName: string) => {
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
       return;
@@ -525,16 +610,26 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       return;
     }
 
-    // Send stop command to backend
+    // Get the real backend command ID from mapping
+    const realCommandId = commandIdMapping.get(commandId) || commandId;
+
+    // Send stop command to backend with real command ID
     const stopRequest = {
       type: 'stop_command',
-      command_id: commandId
+      command_id: realCommandId
     };
 
     socketRef.current.send(JSON.stringify(stopRequest));
 
+    // Clean up mapping after stop
+    setCommandIdMapping(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(commandId);
+      return newMap;
+    });
+
     // Note: Don't immediately clean up state, wait for backend stop confirmation
-  }, []);
+  }, [commandIdMapping]);
 
   // Write to Cookie when history updates (4KB limit, large history may be truncated)
   useEffect(() => {
@@ -576,6 +671,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     executeCommand,
     clearHistory,
     clearStreamingOutput,
+    clearAllStreamingOutputs,
     stopCommand
   };
 };

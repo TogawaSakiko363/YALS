@@ -85,7 +85,7 @@ commands:
     description: "Network connectivity test"
   
   mtr:
-    use_plugin: "mtr" # This function is for commercial only
+    use_plugin: "mtr"
     description: "Network route analysis"
 ```
 

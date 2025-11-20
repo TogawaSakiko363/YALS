@@ -1,8 +1,8 @@
 package config
 
 import (
+	"YALS/internal/logger"
 	"fmt"
-	"log"
 	"os"
 	"slices"
 	"strings"
@@ -41,6 +41,12 @@ type Config struct {
 		MaxRetries          int `yaml:"max_retries"`
 		DeleteOfflineAgents int `yaml:"delete_offline_agents"`
 	} `yaml:"connection"`
+
+	RateLimit struct {
+		Enabled     bool `yaml:"enabled"`
+		MaxCommands int  `yaml:"max_commands"`
+		TimeWindow  int  `yaml:"time_window"`
+	} `yaml:"rate_limit"`
 }
 
 // AgentDetails represents additional agent information
@@ -65,7 +71,7 @@ func LoadConfig(filename string) (*Config, error) {
 
 	// Validate and set default values
 	if config.Connection.DeleteOfflineAgents < 0 {
-		log.Printf("Warning: delete_offline_agents cannot be negative, setting to 0 (disabled)")
+		logger.Warnf("delete_offline_agents cannot be negative, setting to 0 (disabled)")
 		config.Connection.DeleteOfflineAgents = 0
 	}
 
@@ -97,6 +103,10 @@ type AgentConfig struct {
 		Group   string       `yaml:"group"`
 		Details AgentDetails `yaml:"details"`
 	} `yaml:"agent"`
+
+	Log struct {
+		LogLevel string `yaml:"log_level"`
+	} `yaml:"log"`
 
 	Commands map[string]CommandTemplate `yaml:"commands"`
 	// Internal ordered command list
@@ -142,6 +152,11 @@ func LoadAgentConfig(filename string) (*AgentConfig, error) {
 		}
 		// Sort alphabetically for consistent order
 		slices.Sort(config.orderedCommands)
+	}
+
+	// Set default log level if not specified
+	if config.Log.LogLevel == "" {
+		config.Log.LogLevel = "info"
 	}
 
 	return &config, nil
@@ -228,11 +243,6 @@ func extractCommandOrderFromText(data string) []string {
 	}
 
 	return commands
-}
-
-// contains checks if a slice contains a specific string (deprecated: use slices.Contains)
-func contains(slice []string, item string) bool {
-	return slices.Contains(slice, item)
 }
 
 // GetAvailableCommands returns the list of available commands in the order they appear in the config file

@@ -2,9 +2,10 @@ package agent
 
 import (
 	"YALS/internal/config"
+	"YALS/internal/logger"
+
 	"bufio"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -34,8 +35,8 @@ type Client struct {
 // CommandRequest represents a command request from the server
 type CommandRequest struct {
 	Type        string `json:"type"`
-	CommandName string `json:"command_name"` // Command name instead of full command
-	Target      string `json:"target"`       // Target parameter (e.g., IP address)
+	CommandName string `json:"command_name"`
+	Target      string `json:"target"`
 	CommandID   string `json:"command_id"`
 }
 
@@ -47,6 +48,7 @@ type CommandResponse struct {
 	Error      string `json:"error,omitempty"`
 	IsComplete bool   `json:"is_complete"`
 	IsError    bool   `json:"is_error"`
+	OutputMode string `json:"output_mode,omitempty"`
 }
 
 // NewClient creates a new agent client (deprecated, use NewClientWithConfig)
@@ -58,6 +60,7 @@ func NewClient(password string) *Client {
 
 // NewClientWithConfig creates a new agent client with configuration
 func NewClientWithConfig(agentConfig *config.AgentConfig) *Client {
+
 	return &Client{
 		config:         agentConfig,
 		activeCommands: make(map[string]*ActiveCommand),
@@ -78,14 +81,14 @@ func (c *Client) ConnectToServer() error {
 	headers := http.Header{}
 	headers.Set("X-Agent-Password", c.config.Server.Password)
 
-	// Create dialer with larger buffers for handshake messages
+	// Create dialer with 64KB buffers
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 10 * time.Second,
-		ReadBufferSize:   65536, // 64KB read buffer
-		WriteBufferSize:  65536, // 64KB write buffer
+		ReadBufferSize:   65536,
+		WriteBufferSize:  65536,
 	}
 
-	log.Printf("Connecting to server at %s", serverURL)
+	logger.Infof("Connecting to server at %s", serverURL)
 
 	// Connect to server
 	conn, _, err := dialer.Dial(serverURL, headers)
@@ -94,11 +97,11 @@ func (c *Client) ConnectToServer() error {
 	}
 	defer conn.Close()
 
-	log.Printf("Connected to server successfully")
+	logger.Infof("Connected to server successfully")
 
 	// Set up ping/pong handling
 	conn.SetPongHandler(func(appData string) error {
-		log.Printf("Received pong from server")
+		logger.Debugf("Received pong from server")
 		return nil
 	})
 
@@ -115,7 +118,7 @@ func (c *Client) ConnectToServer() error {
 		return fmt.Errorf("failed to send handshake: %w", err)
 	}
 
-	log.Printf("Sent handshake with %d available commands", len(c.config.Commands))
+	logger.Infof("Sent handshake with %d available commands", len(c.config.Commands))
 
 	// Wait for handshake acknowledgment
 	var ack map[string]any
@@ -127,14 +130,14 @@ func (c *Client) ConnectToServer() error {
 		return fmt.Errorf("invalid handshake acknowledgment")
 	}
 
-	log.Printf("Handshake completed successfully")
+	logger.Infof("Handshake completed successfully")
 
 	// Handle incoming messages
 	for {
 		var req CommandRequest
 		if err := conn.ReadJSON(&req); err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("WebSocket error: %v", err)
+				logger.Errorf("WebSocket error: %v", err)
 			}
 			break
 		}
@@ -145,11 +148,11 @@ func (c *Client) ConnectToServer() error {
 		case "stop_command":
 			c.stopCommand(req.CommandID)
 		default:
-			log.Printf("Unknown message type: %s", req.Type)
+			logger.Warnf("Unknown message type: %s", req.Type)
 		}
 	}
 
-	log.Printf("Disconnected from server")
+	logger.Infof("Disconnected from server")
 	return nil
 }
 
@@ -162,7 +165,7 @@ func (c *Client) executeCommand(conn *websocket.Conn, req CommandRequest) {
 		return
 	}
 
-	log.Printf("Executing command: %s", fullCommand)
+	logger.Infof("Executing command: %s", req.CommandID)
 
 	// Store and manage active command
 	c.storeActiveCommand(req.CommandID, cmd, fullCommand)
@@ -181,22 +184,26 @@ func (c *Client) executeCommand(conn *websocket.Conn, req CommandRequest) {
 func (c *Client) prepareCommand(req CommandRequest) (string, *exec.Cmd, error) {
 	// Security check: Verify command is allowed
 	if !c.config.IsCommandAllowed(req.CommandName) {
-		log.Printf("SECURITY: Blocked unauthorized command '%s' from server", req.CommandName)
+		logger.Warnf("SECURITY: Blocked unauthorized command '%s' from server", req.CommandName)
 		return "", nil, fmt.Errorf("command '%s' is not allowed", req.CommandName)
 	}
 
-	// Get command template
-	template, exists := c.config.GetCommandTemplate(req.CommandName)
+	// Get command configuration
+	cmdConfig, exists := c.config.GetCommandConfig(req.CommandName)
 	if !exists {
+		return "", nil, fmt.Errorf("command configuration not found: %s", req.CommandName)
+	}
+
+	// Get command template for traditional commands
+	template := cmdConfig.Template
+	if template == "" {
 		return "", nil, fmt.Errorf("command template not found: %s", req.CommandName)
 	}
 
 	// Build full command with target parameter (only if not ignored)
 	fullCommand := template
-	if req.Target != "" {
-		if cmdConfig, exists := c.config.GetCommandConfig(req.CommandName); !exists || !cmdConfig.IgnoreTarget {
-			fullCommand = template + " " + req.Target
-		}
+	if req.Target != "" && !cmdConfig.IgnoreTarget {
+		fullCommand = template + " " + req.Target
 	}
 
 	// Create command based on complexity
@@ -242,7 +249,7 @@ func (c *Client) removeActiveCommand(commandID string) {
 	delete(c.activeCommands, commandID)
 }
 
-// runCommandWithStreaming executes a command and streams its output
+// runCommandWithStreaming executes a command and streams its output with complete replacement
 func (c *Client) runCommandWithStreaming(conn *websocket.Conn, commandID string, cmd *exec.Cmd) error {
 	// Set up pipes
 	stdout, err := cmd.StdoutPipe()
@@ -259,13 +266,41 @@ func (c *Client) runCommandWithStreaming(conn *websocket.Conn, commandID string,
 		return fmt.Errorf("failed to start command: %w", err)
 	}
 
-	// Stream output
+	// Accumulate output with periodic updates
+	var stdoutLines []string
+	var stderrLines []string
+	var stdoutMutex, stderrMutex sync.Mutex
+
 	done := make(chan error, 1)
 	outputDone := make(chan bool, 2)
 
-	// Read stdout and stderr concurrently
-	go c.streamOutput(stdout, conn, commandID, false, outputDone)
-	go c.streamOutput(stderr, conn, commandID, true, outputDone)
+	// Read stdout and stderr concurrently with accumulation
+	go c.accumulateOutput(stdout, &stdoutLines, &stdoutMutex, outputDone)
+	go c.accumulateOutput(stderr, &stderrLines, &stderrMutex, outputDone)
+
+	// Send periodic updates
+	updateTicker := time.NewTicker(500 * time.Millisecond)
+	defer updateTicker.Stop()
+
+	go func() {
+		for range updateTicker.C {
+			// Combine stdout and stderr
+			stdoutMutex.Lock()
+			stderrMutex.Lock()
+
+			var allLines []string
+			allLines = append(allLines, stdoutLines...)
+			allLines = append(allLines, stderrLines...)
+
+			if len(allLines) > 0 {
+				output := strings.Join(allLines, "\n")
+				c.sendOutput(conn, commandID, output, false)
+			}
+
+			stderrMutex.Unlock()
+			stdoutMutex.Unlock()
+		}
+	}()
 
 	// Wait for command completion
 	go func() {
@@ -274,6 +309,7 @@ func (c *Client) runCommandWithStreaming(conn *websocket.Conn, commandID string,
 		time.Sleep(100 * time.Millisecond) // Allow output readers to finish
 		stdout.Close()
 		stderr.Close()
+		updateTicker.Stop()
 	}()
 
 	// Wait for completion and output processing
@@ -281,31 +317,52 @@ func (c *Client) runCommandWithStreaming(conn *websocket.Conn, commandID string,
 	<-outputDone
 	<-outputDone
 
-	if cmdErr != nil {
+	// Send final output
+	stdoutMutex.Lock()
+	stderrMutex.Lock()
+	var allLines []string
+	allLines = append(allLines, stdoutLines...)
+	allLines = append(allLines, stderrLines...)
+	stderrMutex.Unlock()
+	stdoutMutex.Unlock()
+
+	if len(allLines) > 0 {
+		finalOutput := strings.Join(allLines, "\n")
+		if cmdErr != nil {
+			finalOutput += fmt.Sprintf("\nCommand failed: %v", cmdErr)
+		}
+		c.sendOutput(conn, commandID, finalOutput, cmdErr != nil)
+	} else if cmdErr != nil {
 		c.sendOutput(conn, commandID, fmt.Sprintf("Command failed: %v", cmdErr), true)
 	}
+
+	time.Sleep(50 * time.Millisecond)
 
 	return nil
 }
 
-// streamOutput reads from a pipe and sends output to the server
-func (c *Client) streamOutput(pipe interface{ Read([]byte) (int, error) }, conn *websocket.Conn, commandID string, isError bool, done chan<- bool) {
+// accumulateOutput reads from a pipe and accumulates output lines
+func (c *Client) accumulateOutput(pipe interface{ Read([]byte) (int, error) }, lines *[]string, mutex *sync.Mutex, done chan<- bool) {
 	defer func() { done <- true }()
 
 	scanner := bufio.NewScanner(pipe)
 	for scanner.Scan() {
-		c.sendOutput(conn, commandID, scanner.Text(), isError)
+		line := scanner.Text()
+		mutex.Lock()
+		*lines = append(*lines, line)
+		mutex.Unlock()
 	}
 
 	if err := scanner.Err(); err != nil && !isClosedPipeError(err) {
-		c.sendOutput(conn, commandID, fmt.Sprintf("Error reading output: %v", err), true)
+		mutex.Lock()
+		*lines = append(*lines, fmt.Sprintf("Error reading output: %v", err))
+		mutex.Unlock()
 	}
 }
 
 // isComplexCommand checks if a command needs shell execution
 func (c *Client) isComplexCommand(fullCommand string) bool {
-	// Use first 3 operators for complexity check (pipes and logical operators)
-	complexOperators := shellOperators[:3] // |, &&, ||
+	complexOperators := shellOperators[:3]
 	for _, op := range complexOperators {
 		if strings.Contains(fullCommand, op) {
 			return true
@@ -321,10 +378,11 @@ func (c *Client) stopCommand(commandID string) {
 
 	activeCmd, exists := c.activeCommands[commandID]
 	if !exists || activeCmd.Cmd.Process == nil {
+		logger.Warnf("No active command found to stop: %s", commandID)
 		return
 	}
 
-	log.Printf("Stopping command: %s", activeCmd.FullCommand)
+	logger.Infof("Stopping command: %s", commandID)
 
 	// Determine timeout based on command complexity
 	timeout := 1 * time.Second
@@ -347,6 +405,11 @@ func (c *Client) stopCommand(commandID string) {
 
 // sendCommandResponse sends a command response to the server
 func (c *Client) sendCommandResponse(conn *websocket.Conn, commandID, output, errorMsg string, isComplete, isError bool) {
+	c.sendCommandResponseWithMode(conn, commandID, output, errorMsg, isComplete, isError, "append")
+}
+
+// sendCommandResponseWithMode sends a command response to the server with specified output mode
+func (c *Client) sendCommandResponseWithMode(conn *websocket.Conn, commandID, output, errorMsg string, isComplete, isError bool, outputMode string) {
 	resp := CommandResponse{
 		Type:       "command_output",
 		CommandID:  commandID,
@@ -354,21 +417,22 @@ func (c *Client) sendCommandResponse(conn *websocket.Conn, commandID, output, er
 		Error:      errorMsg,
 		IsComplete: isComplete,
 		IsError:    isError,
+		OutputMode: outputMode,
 	}
 
 	if err := conn.WriteJSON(resp); err != nil {
-		log.Printf("Failed to send command response: %v", err)
+		logger.Errorf("Failed to send command response: %v", err)
 	}
 }
 
-// sendOutput sends command output to the server
+// sendOutput sends command output to the server (uses replace mode by default)
 func (c *Client) sendOutput(conn *websocket.Conn, commandID, output string, isError bool) {
-	c.sendCommandResponse(conn, commandID, output, "", false, isError)
+	c.sendCommandResponseWithMode(conn, commandID, output, "", false, isError, "replace")
 }
 
 // sendError sends an error message to the server
 func (c *Client) sendError(conn *websocket.Conn, commandID, errorMsg string) {
-	c.sendCommandResponse(conn, commandID, "", errorMsg, true, true)
+	c.sendCommandResponse(conn, commandID, errorMsg, errorMsg, true, true)
 }
 
 // sendCompletion sends a completion message to the server
@@ -381,8 +445,6 @@ func isClosedPipeError(err error) bool {
 	if err == nil {
 		return false
 	}
-
-	// Check common pipe closed error messages
 	errStr := err.Error()
 	return strings.Contains(errStr, "file already closed") ||
 		strings.Contains(errStr, "broken pipe") ||

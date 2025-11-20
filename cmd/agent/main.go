@@ -10,6 +10,7 @@ import (
 
 	"YALS/internal/agent"
 	"YALS/internal/config"
+	"YALS/internal/logger"
 )
 
 func main() {
@@ -23,9 +24,12 @@ func main() {
 		log.Fatalf("Failed to load agent configuration: %v", err)
 	}
 
-	log.Printf("Starting YALS Agent: %s", agentConfig.Agent.Name)
-	log.Printf("Server: %s:%d", agentConfig.Server.Host, agentConfig.Server.Port)
-	log.Printf("Loaded %d allowed commands", len(agentConfig.Commands))
+	// Set up logging with configured level
+	logger.SetGlobalLevelFromString(agentConfig.Log.LogLevel)
+
+	logger.Infof("Starting YALS Agent: %s", agentConfig.Agent.Name)
+	logger.Infof("Server: %s:%d", agentConfig.Server.Host, agentConfig.Server.Port)
+	logger.Infof("Loaded %d allowed commands", len(agentConfig.Commands))
 
 	// Create agent client with configuration
 	agentClient := agent.NewClientWithConfig(agentConfig)
@@ -39,18 +43,18 @@ func main() {
 		for {
 			err := agentClient.ConnectToServer()
 			if err != nil {
-				log.Printf("Connection failed: %v", err)
-				log.Println("Retrying in 10 seconds...")
+				logger.Errorf("Connection failed: %v", err)
+				logger.Info("Retrying in 10 seconds...")
 				time.Sleep(10 * time.Second)
 				continue
 			}
 			// If we reach here, connection was closed normally
-			log.Println("Connection closed, retrying in 5 seconds...")
+			logger.Info("Connection closed, retrying in 5 seconds...")
 			time.Sleep(5 * time.Second)
 		}
 	}()
 
 	// Wait for interrupt signal
 	<-stop
-	log.Println("Shutting down agent...")
+	logger.Info("Shutting down agent...")
 }

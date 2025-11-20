@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useYalsClient } from './hooks/useYalsClient';
 import { ConnectionStatus } from './components/ConnectionStatus';
 import { AgentSelector } from './components/AgentSelector';
@@ -27,7 +27,7 @@ function App() {
     executeCommand,
     setSelectedAgent,
     clearHistory,
-    clearStreamingOutput,
+    clearAllStreamingOutputs,
     stopCommand
   } = useYalsClient();
 
@@ -40,41 +40,34 @@ function App() {
   }, []);
 
   const [latestOutput, setLatestOutput] = useState<string | null>(null);
-  const [currentCommandId, setCurrentCommandId] = useState<string | null>(null);
 
   const handleExecuteCommand = useCallback(async (command: CommandType, target: string) => {
     try {
-      // Generate commandId consistently with useYalsClient
-      const commandConfig = commands.find(cmd => cmd.name === command);
-      const requiresTarget = !commandConfig?.ignore_target;
-      const commandId = `${command}-${requiresTarget ? target.trim() : ''}-${selectedAgent}`;
-      setCurrentCommandId(commandId);
       setLatestOutput(null); // Clear previous output
+      clearAllStreamingOutputs(); // Clear all streaming outputs to prevent stale data
       
-      const res = await executeCommand(command, target);
-      // Set final output
-      setLatestOutput(res.output || '');
-      setCurrentCommandId(null); // Command completed, clear current command ID
+      const { response } = await executeCommand(command, target);
       
-      // Delay cleanup of streaming output to ensure Terminal component can display final result
-      setTimeout(() => {
-        clearStreamingOutput(commandId);
-      }, 100);
+      // Set final output from response
+      setLatestOutput(response.output || '');
     } catch (error: any) {
       console.error('Command execution failed:', error);
       setLatestOutput(error.message || 'Command execution failed');
-      setCurrentCommandId(null);
     }
-  }, [commands, selectedAgent, executeCommand, clearStreamingOutput]);
+  }, [executeCommand, clearAllStreamingOutputs]);
 
   const handleStopCommand = useCallback(() => {
-    if (currentCommandId) {
-      stopCommand(currentCommandId);
-      // Don't immediately clean up state, wait for backend stop confirmation
-      // setCurrentCommandId(null);
-      // setLatestOutput('Command stopped');
+    // Find the first active command and stop it
+    if (activeCommands.size > 0) {
+      const firstActiveCommand = Array.from(activeCommands)[0];
+      stopCommand(firstActiveCommand);
     }
-  }, [currentCommandId, stopCommand]);
+  }, [activeCommands, stopCommand]);
+
+  const handleClearOutput = useCallback(() => {
+    setLatestOutput(null);
+    clearAllStreamingOutputs();
+  }, [clearAllStreamingOutputs]);
 
   return (
     <div className="app-container" style={{ backgroundColor: config.backgroundColor }}>
@@ -122,9 +115,9 @@ function App() {
                 activeCommands={activeCommands}
                 onExecuteCommand={handleExecuteCommand}
                 onStopCommand={handleStopCommand}
+                onClearOutput={handleClearOutput}
                 latestOutput={latestOutput}
                 streamingOutputs={streamingOutputs}
-                currentCommandId={currentCommandId}
                 commands={commands}
               />
 

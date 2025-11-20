@@ -21,6 +21,7 @@ export interface CommandResponse {
   output?: string;
   error?: string;
   timestamp?: number;
+  stopped?: boolean; // Indicates if command was stopped by user
 }
 
 export interface AgentGroup {
@@ -45,6 +46,8 @@ export interface YalsMessage {
   output?: string;
   error?: string;
   is_complete?: boolean;
+  output_mode?: string; // "append" or "replace"
+  stopped?: boolean; // Indicates if command was stopped by user
 }
 
 export type CommandType = string;

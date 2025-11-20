@@ -2,7 +2,7 @@
 
 # Application settings
 app:
-  version: "community-1.0"
+  version: "community-2.0"
 
 # Server settings
 server:
