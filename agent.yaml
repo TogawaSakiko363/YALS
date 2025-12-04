@@ -1,0 +1,40 @@
+# Agent Configuration File
+# This file defines the agent's connection settings and allowed commands
+
+# Connection info
+server:
+  host: "lg.example.com"
+  port: 443
+  password: "your_password"
+  tls: true  # Use TLS for secure connection
+
+agent:
+  name: "Node 1"
+  group: "Location A"
+  details:
+    location: "Earth"
+    datacenter: "DEEPDARK 1"
+    test_ip: "11.4.5.14"
+    description: "Your node info"
+
+# Command templates - flexible command definitions
+# Only these commands can be executed by this agent
+commands:
+  ping:
+    template: "ping -c 4"
+    description: "Network connectivity test"
+
+  mtr:
+    template: "mtr -rw -c 4"
+    description: "Network route and packet loss analysis"
+
+  nexttrace:
+    template: "nexttrace --no-color --map --ipv4"
+    description: "Visual route tracing"
+  
+  # Example: Command that doesn't need target and has execution limit
+  # geekbench6:
+  #   template: "echo 'Running Geekbench 6 test, please wait...' && /opt/geekbench6/geekbench6 --single-core --no-upload | awk '/CPU Information/{p=1} p && /Name|Base Frequency/{print} /Benchmark Summary/{p=2;print;next} p==2&&/Floating Point Score/{print;exit} p==2{print}'"
+  #   description: "Geekbench 6 CPU benchmark"
+  #   ignore_target: true  # Target address is not needed
+  #   maxmium_queue: 1     # Maximum 1 concurrent execution
