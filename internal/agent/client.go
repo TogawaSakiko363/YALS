@@ -266,24 +266,22 @@ func (c *Client) runCommandWithStreaming(conn *websocket.Conn, commandID string,
 		return fmt.Errorf("failed to start command: %w", err)
 	}
 
-	// Accumulate output with periodic updates
+	// Accumulate output with immediate updates
 	var stdoutLines []string
 	var stderrLines []string
 	var stdoutMutex, stderrMutex sync.Mutex
 
 	done := make(chan error, 1)
 	outputDone := make(chan bool, 2)
+	outputUpdate := make(chan bool, 100) // Buffered channel for update notifications
 
 	// Read stdout and stderr concurrently with accumulation
-	go c.accumulateOutput(stdout, &stdoutLines, &stdoutMutex, outputDone)
-	go c.accumulateOutput(stderr, &stderrLines, &stderrMutex, outputDone)
+	go c.accumulateOutputWithNotify(stdout, &stdoutLines, &stdoutMutex, outputDone, outputUpdate)
+	go c.accumulateOutputWithNotify(stderr, &stderrLines, &stderrMutex, outputDone, outputUpdate)
 
-	// Send periodic updates
-	updateTicker := time.NewTicker(250 * time.Millisecond)
-	defer updateTicker.Stop()
-
+	// Send immediate updates when output changes
 	go func() {
-		for range updateTicker.C {
+		for range outputUpdate {
 			// Combine stdout and stderr
 			stdoutMutex.Lock()
 			stderrMutex.Lock()
@@ -309,13 +307,13 @@ func (c *Client) runCommandWithStreaming(conn *websocket.Conn, commandID string,
 		time.Sleep(200 * time.Millisecond) // Allow output readers to finish
 		stdout.Close()
 		stderr.Close()
-		updateTicker.Stop()
 	}()
 
 	// Wait for completion and output processing
 	cmdErr := <-done
 	<-outputDone
 	<-outputDone
+	close(outputUpdate) // Close update channel
 
 	// Send final output
 	stdoutMutex.Lock()
@@ -341,8 +339,8 @@ func (c *Client) runCommandWithStreaming(conn *websocket.Conn, commandID string,
 	return nil
 }
 
-// accumulateOutput reads from a pipe and accumulates output lines
-func (c *Client) accumulateOutput(pipe interface{ Read([]byte) (int, error) }, lines *[]string, mutex *sync.Mutex, done chan<- bool) {
+// accumulateOutputWithNotify reads from a pipe, accumulates output lines, and notifies on updates
+func (c *Client) accumulateOutputWithNotify(pipe interface{ Read([]byte) (int, error) }, lines *[]string, mutex *sync.Mutex, done chan<- bool, notify chan<- bool) {
 	defer func() { done <- true }()
 
 	scanner := bufio.NewScanner(pipe)
@@ -351,12 +349,24 @@ func (c *Client) accumulateOutput(pipe interface{ Read([]byte) (int, error) }, l
 		mutex.Lock()
 		*lines = append(*lines, line)
 		mutex.Unlock()
+
+		// Notify immediately when new output is available
+		select {
+		case notify <- true:
+		default:
+			// Channel full, skip notification (update will happen soon anyway)
+		}
 	}
 
 	if err := scanner.Err(); err != nil && !isClosedPipeError(err) {
 		mutex.Lock()
 		*lines = append(*lines, fmt.Sprintf("Error reading output: %v", err))
 		mutex.Unlock()
+
+		select {
+		case notify <- true:
+		default:
+		}
 	}
 }
 
