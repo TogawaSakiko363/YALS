@@ -17,9 +17,5 @@ websocket:
 
 # Connection settings
 connection:
-  timeout: 10        # seconds
-  keepalive: 30      # seconds
-  retry_interval: 15  # seconds
-  max_retries: 0 #  set to 0 to always retry
-  delete_offline_agents: 86400  # seconds (24 hours), set to 0 to never delete
+  keepalive: 86400  # seconds (24 hours), set to 0 to never delete
 

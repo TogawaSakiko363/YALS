@@ -50,13 +50,13 @@ func main() {
 	agentManager := agent.NewManager()
 
 	// Configure offline agent cleanup (if enabled)
-	if cfg.Connection.DeleteOfflineAgents > 0 {
-		maxOfflineDuration := time.Duration(cfg.Connection.DeleteOfflineAgents) * time.Second
+	if cfg.Connection.KeepAlive > 0 {
+		maxOfflineDuration := time.Duration(cfg.Connection.KeepAlive) * time.Second
 		logger.Infof("Offline agent cleanup enabled: delete after %v offline", maxOfflineDuration)
 
 		// Start periodic cleanup (using keepalive interval, reduced by 10x to save resources)
 		go func() {
-			checkInterval := time.Duration(cfg.Connection.Keepalive*10) * time.Second
+			checkInterval := time.Duration(cfg.Connection.KeepAlive*10) * time.Second
 			if checkInterval < time.Minute {
 				checkInterval = time.Minute // Check at least once per minute
 			}

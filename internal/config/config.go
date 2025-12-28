@@ -28,11 +28,7 @@ type Config struct {
 	} `yaml:"websocket"`
 
 	Connection struct {
-		Timeout             int `yaml:"timeout"`
-		Keepalive           int `yaml:"keepalive"`
-		RetryInterval       int `yaml:"retry_interval"`
-		MaxRetries          int `yaml:"max_retries"`
-		DeleteOfflineAgents int `yaml:"delete_offline_agents"`
+		KeepAlive int `yaml:"keepalive"`
 	} `yaml:"connection"`
 
 	RateLimit struct {
@@ -63,9 +59,9 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	// Validate and set default values
-	if config.Connection.DeleteOfflineAgents < 0 {
-		logger.Warnf("delete_offline_agents cannot be negative, setting to 0 (disabled)")
-		config.Connection.DeleteOfflineAgents = 0
+	if config.Connection.KeepAlive < 0 {
+		logger.Warnf("keepalive cannot be negative, setting to 0 (disabled)")
+		config.Connection.KeepAlive = 0
 	}
 
 	// Store the config for later retrieval
