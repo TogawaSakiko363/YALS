@@ -101,23 +101,17 @@ server:
   host: "$SERVER_HOST"
   port: $SERVER_PORT
   password: "$SERVER_PASSWORD"
-  log_level: "info"  # debug, info, warn, error
-  tls: false # Set to true to enable HTTPS/TLS
-  tls_cert_file: "./cert.pem"  # Path to TLS certificate file
-  tls_key_file: "./key.pem"    # Path to TLS private key file
+  log_level: "info"
+  tls: false
+  tls_cert_file: "./cert.pem"
+  tls_key_file: "./key.pem"
 
-# WebSocket settings
 websocket:
-  ping_interval: 30  # seconds
-  pong_wait: 60      # seconds
+  ping_interval: 30
+  pong_wait: 60
 
-# Connection settings
 connection:
-  timeout: 10        # seconds
-  keepalive: 30      # seconds
-  retry_interval: 15  # seconds
-  max_retries: 0 #  set to 0 to always retry
-  delete_offline_agents: 86400  # seconds (24 hours), set to 0 to never delete
+  keepalive: 86400
 EOF
 
 mkdir -p "$WEB_DIR"

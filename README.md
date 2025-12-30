@@ -79,11 +79,7 @@ websocket:
   pong_wait: 60
 
 connection:
-  timeout: 10
-  keepalive: 30
-  retry_interval: 15
-  max_retries: 0
-  delete_offline_agents: 86400
+  keepalive: 86400
 ```
 
 ### Agent Configuration (agent.yaml)

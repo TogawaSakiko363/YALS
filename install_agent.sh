@@ -117,10 +117,6 @@ commands:
   mtr:
     template: "mtr -rw -c 4"
     description: "Network route and packet loss analysis"
-
-  nexttrace:
-    template: "nexttrace --no-color --map --ipv4"
-    description: "Visual route tracing"
 EOF
 
 # systemd
