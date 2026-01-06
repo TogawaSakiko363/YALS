@@ -27,6 +27,12 @@ const (
 
 // ValidateInput validates the input and returns its type
 func ValidateInput(input string) InputType {
+
+	// Check if input length exceeds 256 characters
+	if len(input) > 256 {
+		return InvalidInput
+	}
+
 	// Trim whitespace
 	input = strings.TrimSpace(input)
 
@@ -35,13 +41,28 @@ func ValidateInput(input string) InputType {
 		return InvalidInput
 	}
 
-	// Check if input is an IP address
-	if net.ParseIP(input) != nil {
+	// Check if input contains port (IP:port or domain:port)
+	host := input
+	if strings.Contains(input, ":") {
+		parts := strings.Split(input, ":")
+		if len(parts) == 2 {
+			host = parts[0]
+			// Validate port is numeric
+			if _, err := regexp.MatchString(`^\d+$`, parts[1]); err != nil || parts[1] == "" {
+				return InvalidInput
+			}
+		} else {
+			return InvalidInput
+		}
+	}
+
+	// Check if host is an IP address
+	if net.ParseIP(host) != nil {
 		return IPAddress
 	}
 
-	// Check if input is a valid domain name
-	if isValidDomain(input) {
+	// Check if host is a valid domain name
+	if isValidDomain(host) {
 		return Domain
 	}
 

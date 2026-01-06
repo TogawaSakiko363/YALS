@@ -385,7 +385,7 @@ func (h *Handler) handleCommand(conn *websocket.Conn, req CommandRequest, client
 		inputType := validator.ValidateInput(req.Target)
 		if inputType == validator.InvalidInput {
 			resp.Success = false
-			resp.Error = "Invalid target: must be an IP address or domain name"
+			resp.Error = "Invalid target: must be an IP address or domain name, and not exceed 256 characters"
 			h.sendStreamingResponseWithID(conn, resp, true, "")
 			return
 		}
