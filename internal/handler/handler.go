@@ -57,6 +57,7 @@ type CommandRequest struct {
 	Command   string `json:"command,omitempty"`
 	Target    string `json:"target,omitempty"`
 	CommandID string `json:"command_id,omitempty"`
+	IPVersion string `json:"ip_version,omitempty"` // "auto", "ipv4", or "ipv6"
 }
 
 // CommandResponse represents a command response to the client
@@ -94,8 +95,8 @@ type CommandsListResponse struct {
 	Commands []validator.CommandDetail `json:"commands"`
 }
 
-// AppConfigResponse represents the application configuration response
-type AppConfigResponse struct {
+// AppVersion represents the application configuration response
+type AppVersion struct {
 	Type    string            `json:"type"`
 	Version string            `json:"version"`
 	Config  map[string]string `json:"config"`
@@ -421,7 +422,7 @@ func (h *Handler) handleCommand(conn *websocket.Conn, req CommandRequest, client
 	h.setActiveCommand(commandID, stopChan)
 
 	// Execute command with streaming output
-	err := h.agentManager.ExecuteCommandStreamingWithStopAndID(req.Agent, cmd, commandID, stopChan, func(output string, isError bool, isComplete bool, isStopped bool) {
+	err := h.agentManager.ExecuteCommandStreamingWithStopAndID(req.Agent, cmd, commandID, req.IPVersion, stopChan, func(output string, isError bool, isComplete bool, isStopped bool) {
 		// Get the correct connection for this command using commandID routing
 		targetConn := h.getConnectionForCommand(commandID, conn)
 
@@ -516,7 +517,7 @@ func (h *Handler) handleGetConfig(conn *websocket.Conn) {
 	// Get agent statistics
 	stats := h.agentManager.GetAgentStats()
 
-	response := AppConfigResponse{
+	response := AppVersion{
 		Type:    "app_config",
 		Version: utils.GetAppVersion(),
 	}

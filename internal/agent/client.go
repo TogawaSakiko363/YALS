@@ -4,7 +4,6 @@ import (
 	"YALS/internal/config"
 	"YALS/internal/logger"
 	"YALS/internal/validator"
-
 	"bufio"
 	"fmt"
 	"net/http"
@@ -39,6 +38,7 @@ type CommandRequest struct {
 	CommandName string `json:"command_name"`
 	Target      string `json:"target"`
 	CommandID   string `json:"command_id"`
+	IPVersion   string `json:"ip_version,omitempty"` // "auto", "ipv4", or "ipv6"
 }
 
 // CommandResponse represents a command response to the server
@@ -195,16 +195,16 @@ func (c *Client) prepareCommand(req CommandRequest) (string, *exec.Cmd, error) {
 		return "", nil, fmt.Errorf("command configuration not found: %s", req.CommandName)
 	}
 
+	// Resolve domain name if target is a domain
+	resolvedTarget := req.Target
+	if req.Target != "" && !cmdConfig.IgnoreTarget {
+		resolvedTarget = c.resolveTargetIfNeeded(req.Target, req.IPVersion)
+	}
+
 	// Get command template for traditional commands
 	template := cmdConfig.Template
 	if template == "" {
 		return "", nil, fmt.Errorf("command template not found: %s", req.CommandName)
-	}
-
-	// Resolve domain name if target is a domain
-	resolvedTarget := req.Target
-	if req.Target != "" && !(cmdConfig.IgnoreTarget) {
-		resolvedTarget = c.resolveTargetIfNeeded(req.Target)
 	}
 
 	// Build full command with target parameter (only if not ignored)
@@ -223,7 +223,7 @@ func (c *Client) prepareCommand(req CommandRequest) (string, *exec.Cmd, error) {
 }
 
 // resolveTargetIfNeeded resolves domain name to IP if target is a domain
-func (c *Client) resolveTargetIfNeeded(target string) string {
+func (c *Client) resolveTargetIfNeeded(target, ipVersion string) string {
 	// Extract host from target (may include port)
 	host := target
 	port := ""
@@ -240,21 +240,42 @@ func (c *Client) resolveTargetIfNeeded(target string) string {
 	// Check if host is a domain name
 	inputType := validator.ValidateInput(host)
 	if inputType == validator.Domain {
+		// Convert string to IPVersion type
+		var dnsIPVersion validator.IPVersion
+		switch ipVersion {
+		case "ipv4":
+			dnsIPVersion = validator.IPVersionIPv4
+		case "ipv6":
+			dnsIPVersion = validator.IPVersionIPv6
+		default:
+			dnsIPVersion = validator.IPVersionAuto
+		}
 
-		// Resolve domain to IP
-		ips, err := validator.ResolveDomain(host)
+		// Resolve domain to IP with version preference
+		ips, err := validator.ResolveDomainWithVersion(host, dnsIPVersion)
 		if err != nil {
-			logger.Warnf("Failed to resolve domain %s: %v, using original target", host, err)
+			logger.Warnf("Failed to resolve domain %s with IP version %s: %v, using original target", host, ipVersion, err)
 			return target
 		}
 
 		if len(ips) > 0 {
 			resolvedIP := ips[0].String()
 
+			// Check if it's IPv6 and format accordingly
+			parsedIP := ips[0]
+			isIPv6 := parsedIP.To4() == nil
+
 			// Reconstruct target with resolved IP
 			if port != "" {
+				if isIPv6 {
+					// IPv6 with port needs brackets: [ipv6]:port
+					return "[" + resolvedIP + "]:" + port
+				}
+				// IPv4 with port: ipv4:port
 				return resolvedIP + ":" + port
 			}
+
+			// No port specified - return IP as-is (no brackets)
 			return resolvedIP
 		}
 	}
@@ -430,6 +451,7 @@ func (c *Client) isComplexCommand(fullCommand string) bool {
 
 // stopCommand stops a running command
 func (c *Client) stopCommand(commandID string) {
+
 	c.commandsLock.Lock()
 	defer c.commandsLock.Unlock()
 

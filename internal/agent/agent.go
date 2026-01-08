@@ -270,7 +270,7 @@ func (m *Manager) ExecuteCommand(agentName, command string) (string, error) {
 	}
 
 	// Send command request
-	req := buildCommandRequest(commandName, target, commandID)
+	req := buildCommandRequest(commandName, target, commandID, "auto")
 
 	if err := agent.conn.WriteJSON(req); err != nil {
 		return "", fmt.Errorf("failed to send command: %w", err)
@@ -286,7 +286,7 @@ func (m *Manager) ExecuteCommand(agentName, command string) (string, error) {
 func (m *Manager) ExecuteCommandStreaming(agentName, command string, callback StreamingOutputCallback) error {
 	// Generate command ID
 	commandID := fmt.Sprintf("%s-%d", agentName, time.Now().UnixNano())
-	return m.ExecuteCommandStreamingWithStopAndID(agentName, command, commandID, nil, func(output string, isError bool, isComplete bool, isStopped bool) {
+	return m.ExecuteCommandStreamingWithStopAndID(agentName, command, commandID, "auto", nil, func(output string, isError bool, isComplete bool, isStopped bool) {
 		callback(output, isError, isComplete)
 	})
 }
@@ -295,11 +295,11 @@ func (m *Manager) ExecuteCommandStreaming(agentName, command string, callback St
 func (m *Manager) ExecuteCommandStreamingWithStop(agentName, command string, stopChan <-chan bool, callback StreamingOutputCallbackWithStop) error {
 	// Generate command ID
 	commandID := fmt.Sprintf("%s-%d", agentName, time.Now().UnixNano())
-	return m.ExecuteCommandStreamingWithStopAndID(agentName, command, commandID, stopChan, callback)
+	return m.ExecuteCommandStreamingWithStopAndID(agentName, command, commandID, "auto", stopChan, callback)
 }
 
 // ExecuteCommandStreamingWithStopAndID executes a command on an agent with streaming output, stop support and custom command ID
-func (m *Manager) ExecuteCommandStreamingWithStopAndID(agentName, command, commandID string, stopChan <-chan bool, callback StreamingOutputCallbackWithStop) error {
+func (m *Manager) ExecuteCommandStreamingWithStopAndID(agentName, command, commandID, ipVersion string, stopChan <-chan bool, callback StreamingOutputCallbackWithStop) error {
 	m.agentsLock.RLock()
 	agent, exists := m.agents[agentName]
 	m.agentsLock.RUnlock()
@@ -329,6 +329,11 @@ func (m *Manager) ExecuteCommandStreamingWithStopAndID(agentName, command, comma
 		target = ""
 	}
 
+	// Default to "auto" if not specified
+	if ipVersion == "" {
+		ipVersion = "auto"
+	}
+
 	// Create a channel to receive command output with larger buffer to prevent output loss
 	outputChan := make(chan CommandOutput, 1000)
 	defer close(outputChan)
@@ -337,8 +342,8 @@ func (m *Manager) ExecuteCommandStreamingWithStopAndID(agentName, command, comma
 	m.registerOutputHandler(commandID, outputChan)
 	defer m.unregisterOutputHandler(commandID)
 
-	// Send command request
-	req := buildCommandRequest(commandName, target, commandID)
+	// Send command request with IP version
+	req := buildCommandRequest(commandName, target, commandID, ipVersion)
 
 	if err := agent.conn.WriteJSON(req); err != nil {
 		return fmt.Errorf("failed to send command: %w", err)
@@ -648,12 +653,13 @@ func parseCommand(command string) (string, string, error) {
 }
 
 // buildCommandRequest builds a command request
-func buildCommandRequest(commandName, target, commandID string) map[string]any {
+func buildCommandRequest(commandName, target, commandID, ipVersion string) map[string]any {
 	return map[string]any{
 		"type":         "execute_command",
 		"command_name": commandName,
 		"target":       target,
 		"command_id":   commandID,
+		"ip_version":   ipVersion,
 	}
 }
 

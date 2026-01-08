@@ -9,6 +9,15 @@ import (
 	"time"
 )
 
+// IPVersion type alias for DNS IP version
+type IPVersion = dns.IPVersion
+
+const (
+	IPVersionAuto = dns.IPVersionAuto
+	IPVersionIPv4 = dns.IPVersionIPv4
+	IPVersionIPv6 = dns.IPVersionIPv6
+)
+
 // CommandDetail represents a command with its description
 type CommandDetail struct {
 	Name         string `json:"name"`
@@ -73,11 +82,16 @@ func ValidateInput(input string) InputType {
 
 // ResolveDomain resolves a domain name to IP addresses using the DNS resolver
 func ResolveDomain(domain string) ([]net.IP, error) {
+	return ResolveDomainWithVersion(domain, dns.IPVersionAuto)
+}
+
+// ResolveDomainWithVersion resolves a domain name with specific IP version preference
+func ResolveDomainWithVersion(domain string, version dns.IPVersion) ([]net.IP, error) {
 	resolver := dns.GetResolver()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	return resolver.Resolve(ctx, domain)
+	return resolver.ResolveWithVersion(ctx, domain, version)
 }
 
 // extractHostPort extracts host and port from input
