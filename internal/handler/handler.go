@@ -780,8 +780,8 @@ func (rl *RateLimiter) getRemainingTime(sessionID string) time.Duration {
 
 // SessionResponse represents the response for session creation
 type SessionResponse struct {
+	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
-	Timestamp int64  `json:"timestamp"`
 }
 
 // handleGetSession handles the session creation API
@@ -797,8 +797,8 @@ func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
 
 	// Create response
 	response := SessionResponse{
+		Type:      "session_id",
 		SessionID: sessionID,
-		Timestamp: time.Now().UnixMilli(),
 	}
 
 	// Set headers
