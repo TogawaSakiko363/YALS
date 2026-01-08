@@ -1,9 +1,12 @@
 package validator
 
 import (
+	"YALS/internal/dns"
+	"context"
 	"net"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // CommandDetail represents a command with its description
@@ -41,22 +44,21 @@ func ValidateInput(input string) InputType {
 		return InvalidInput
 	}
 
-	// Check if input contains port (IP:port or domain:port)
-	host := input
-	if strings.Contains(input, ":") {
-		parts := strings.Split(input, ":")
-		if len(parts) == 2 {
-			host = parts[0]
-			// Validate port is numeric
-			if _, err := regexp.MatchString(`^\d+$`, parts[1]); err != nil || parts[1] == "" {
-				return InvalidInput
-			}
-		} else {
+	// Extract host and port
+	host, port := extractHostPort(input)
+	if host == "" {
+		return InvalidInput
+	}
+
+	// Validate port if present
+	if port != "" {
+		matched, err := regexp.MatchString(`^\d+$`, port)
+		if err != nil || !matched {
 			return InvalidInput
 		}
 	}
 
-	// Check if host is an IP address
+	// Check if host is an IP address (IPv4 or IPv6)
 	if net.ParseIP(host) != nil {
 		return IPAddress
 	}
@@ -67,6 +69,68 @@ func ValidateInput(input string) InputType {
 	}
 
 	return InvalidInput
+}
+
+// ResolveDomain resolves a domain name to IP addresses using the DNS resolver
+func ResolveDomain(domain string) ([]net.IP, error) {
+	resolver := dns.GetResolver()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	return resolver.Resolve(ctx, domain)
+}
+
+// extractHostPort extracts host and port from input
+// Supports:
+// - IPv4: 192.168.1.1 or 192.168.1.1:8080
+// - IPv6: 2001:db8::1 or [2001:db8::1]:8080
+// - Domain: example.com or example.com:8080
+func extractHostPort(input string) (host, port string) {
+	// Check for IPv6 with port: [2001:db8::1]:8080
+	if strings.HasPrefix(input, "[") {
+		closeBracket := strings.Index(input, "]")
+		if closeBracket == -1 {
+			return "", ""
+		}
+		host = input[1:closeBracket]
+
+		// Check if there's a port after the bracket
+		if len(input) > closeBracket+1 {
+			if input[closeBracket+1] == ':' {
+				port = input[closeBracket+2:]
+			} else {
+				return "", "" // Invalid format
+			}
+		}
+		return host, port
+	}
+
+	// Check for IPv6 without port or IPv4/domain with port
+	lastColon := strings.LastIndex(input, ":")
+	if lastColon == -1 {
+		// No port
+		return input, ""
+	}
+
+	// Try to parse as IPv6 without port
+	if net.ParseIP(input) != nil {
+		return input, ""
+	}
+
+	// Split by last colon for IPv4/domain with port
+	host = input[:lastColon]
+	port = input[lastColon+1:]
+
+	// Verify it's not an IPv6 address being incorrectly split
+	if strings.Contains(host, ":") {
+		// Multiple colons suggest IPv6 without brackets
+		if net.ParseIP(input) != nil {
+			return input, ""
+		}
+		return "", "" // Invalid format
+	}
+
+	return host, port
 }
 
 // isValidDomain checks if the input is a valid domain name
@@ -80,7 +144,6 @@ func isValidDomain(domain string) bool {
 }
 
 // SanitizeCommand ensures the command is safe to execute
-// This function is now deprecated as command validation is handled by agents
 func SanitizeCommand(command, target string, allowedCommands []string) (string, bool) {
 	// Check if command is allowed
 	if !contains(allowedCommands, command) {

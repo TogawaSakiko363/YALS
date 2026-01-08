@@ -3,6 +3,7 @@ package agent
 import (
 	"YALS/internal/config"
 	"YALS/internal/logger"
+	"YALS/internal/validator"
 
 	"bufio"
 	"fmt"
@@ -200,10 +201,16 @@ func (c *Client) prepareCommand(req CommandRequest) (string, *exec.Cmd, error) {
 		return "", nil, fmt.Errorf("command template not found: %s", req.CommandName)
 	}
 
+	// Resolve domain name if target is a domain
+	resolvedTarget := req.Target
+	if req.Target != "" && !(cmdConfig.IgnoreTarget) {
+		resolvedTarget = c.resolveTargetIfNeeded(req.Target)
+	}
+
 	// Build full command with target parameter (only if not ignored)
 	fullCommand := template
-	if req.Target != "" && !cmdConfig.IgnoreTarget {
-		fullCommand = template + " " + req.Target
+	if resolvedTarget != "" && !cmdConfig.IgnoreTarget {
+		fullCommand = template + " " + resolvedTarget
 	}
 
 	// Create command based on complexity
@@ -213,6 +220,48 @@ func (c *Client) prepareCommand(req CommandRequest) (string, *exec.Cmd, error) {
 	}
 
 	return fullCommand, cmd, nil
+}
+
+// resolveTargetIfNeeded resolves domain name to IP if target is a domain
+func (c *Client) resolveTargetIfNeeded(target string) string {
+	// Extract host from target (may include port)
+	host := target
+	port := ""
+
+	// Handle host:port format
+	if strings.Contains(target, ":") {
+		parts := strings.Split(target, ":")
+		if len(parts) == 2 {
+			host = parts[0]
+			port = parts[1]
+		}
+	}
+
+	// Check if host is a domain name
+	inputType := validator.ValidateInput(host)
+	if inputType == validator.Domain {
+		logger.Infof("Resolving domain: %s", host)
+
+		// Resolve domain to IP
+		ips, err := validator.ResolveDomain(host)
+		if err != nil {
+			logger.Warnf("Failed to resolve domain %s: %v, using original target", host, err)
+			return target
+		}
+
+		if len(ips) > 0 {
+			resolvedIP := ips[0].String()
+			logger.Infof("Resolved %s to %s", host, resolvedIP)
+
+			// Reconstruct target with resolved IP
+			if port != "" {
+				return resolvedIP + ":" + port
+			}
+			return resolvedIP
+		}
+	}
+
+	return target
 }
 
 // createCommand creates an exec.Cmd based on command complexity
