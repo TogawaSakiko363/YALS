@@ -1,16 +1,16 @@
 // Web customization config file
 export const config = {
   // Page title
-  pageTitle: 'Exmaple Networks - Looking Glass',
+  pageTitle: 'Example Networks - Looking Glass',
   
   // Footer right text content
-  footerRightText: '© 2025 Exmaple Networks, LLC.',
+  footerRightText: '© 2026 Example Networks, LLC.',
   
   // Web icon path, please put image files in public/images directory
-  faviconPath: '/images/Exmaple.ico',
+  faviconPath: '/images/Example.ico',
   
   // Web top-left logo path, please put image files in public/images directory
-  logoPath: '/images/Exmaple.png',
+  logoPath: '/images/Example.svg',
   
   // Web background color
   backgroundColor: '#f5f5f5ff'

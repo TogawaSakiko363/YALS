@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Play, Terminal, Loader2 } from 'lucide-react';
-import { CommandType, CommandConfig } from '../types/yals';
+import { CommandType, CommandConfig, IPVersion } from '../types/yals';
 
 interface CommandPanelProps {
   selectedAgent: string | null;
   isConnected: boolean;
   activeCommands: Set<string>;
-  onExecuteCommand: (command: CommandType, target: string) => Promise<void>;
+  onExecuteCommand: (command: CommandType, target: string, ipVersion: IPVersion) => Promise<void>;
   onStopCommand?: () => void;
   onClearOutput?: () => void;
   latestOutput?: string | null;
@@ -33,6 +33,7 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
 }) => {
   const [selectedCommand, setSelectedCommand] = useState<CommandType>('ping');
   const [target, setTarget] = useState('');
+  const [ipVersion, setIpVersion] = useState<IPVersion>('auto');
   const [isExecuting, setIsExecuting] = useState(false);
   const [queueLimitError, setQueueLimitError] = useState<string | null>(null);
 
@@ -64,7 +65,7 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
     setQueueLimitError(null); // Clear previous error
     
     try {
-      await onExecuteCommand(selectedCommand, requiresTarget ? target.trim() : '');
+      await onExecuteCommand(selectedCommand, requiresTarget ? target.trim() : '', ipVersion);
     } catch (error: any) {
       console.error('Command execution failed:', error);
       // Check if it's a queue limit error
@@ -74,7 +75,7 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
     } finally {
       setIsExecuting(false);
     }
-  }, [commandOptions, selectedCommand, target, selectedAgent, isConnected, onExecuteCommand]);
+  }, [commandOptions, selectedCommand, target, ipVersion, selectedAgent, isConnected, onExecuteCommand]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -178,6 +179,22 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
                   />
                 </div>
 
+                {/* IP Version selector */}
+                <div className="command-select-container" style={{ minWidth: '100px' }}>
+                  <label className="command-label">IP Version</label>
+                  <select
+                    value={ipVersion}
+                    onChange={(e) => setIpVersion(e.target.value as IPVersion)}
+                    className="command-select"
+                    disabled={!isConnected || !selectedAgent || isCommandActive}
+                    title="Select IP version for DNS resolution"
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="ipv4">IPv4</option>
+                    <option value="ipv6">IPv6</option>
+                  </select>
+                </div>
+
                 {/* Execute/Stop button */}
                 <div className="command-button-container">
                   <button
@@ -237,6 +254,22 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
                     className="command-target-input"
                     disabled={!requiresTarget || !isConnected || !selectedAgent || isCommandActive}
                   />
+                </div>
+
+                {/* IP Version selector */}
+                <div>
+                  <label className="command-label">IP Version</label>
+                  <select
+                    value={ipVersion}
+                    onChange={(e) => setIpVersion(e.target.value as IPVersion)}
+                    className="command-select w-full"
+                    disabled={!isConnected || !selectedAgent || isCommandActive}
+                    title="Select IP version for DNS resolution"
+                  >
+                    <option value="auto">Auto (Prefer IPv4)</option>
+                    <option value="ipv4">IPv4 Only</option>
+                    <option value="ipv6">IPv6 Only</option>
+                  </select>
                 </div>
 
                 {/* Execute/Stop button */}

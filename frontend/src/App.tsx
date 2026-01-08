@@ -4,7 +4,7 @@ import { ConnectionStatus } from './components/ConnectionStatus';
 import { AgentSelector } from './components/AgentSelector';
 import { CommandPanel } from './components/CommandPanel';
 import { CommandHistory } from './components/CommandHistory';
-import { CommandType } from './types/yals';
+import { CommandType, IPVersion } from './types/yals';
 import { Github } from 'lucide-react';
 import { config } from './custom';
 
@@ -41,12 +41,12 @@ function App() {
 
   const [latestOutput, setLatestOutput] = useState<string | null>(null);
 
-  const handleExecuteCommand = useCallback(async (command: CommandType, target: string) => {
+  const handleExecuteCommand = useCallback(async (command: CommandType, target: string, ipVersion: IPVersion) => {
     try {
       setLatestOutput(null); // Clear previous output
       clearAllStreamingOutputs(); // Clear all streaming outputs to prevent stale data
       
-      const { response } = await executeCommand(command, target);
+      const { response } = await executeCommand(command, target, ipVersion);
       
       // Set final output from response
       setLatestOutput(response.output || '');

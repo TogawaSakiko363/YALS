@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -139,6 +140,7 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux, webDir string) {
 	h.webDir = webDir
 
 	mux.HandleFunc("/", h.handleIndex)
+	mux.HandleFunc("/api/session", h.handleGetSession)
 	mux.HandleFunc("/ws/", h.handleWebSocket)
 	mux.HandleFunc("/ws/agent", h.handleAgentWebSocket)
 
@@ -674,8 +676,7 @@ func (h *Handler) broadcastToAllClients(message interface{}, messageType string)
 
 // generateCommandID generates a unique command ID
 func (h *Handler) generateCommandID(command, target, agent, sessionID string) string {
-	timestamp := time.Now().UnixNano()
-	return fmt.Sprintf("%s-%s-%s-%s-%d", command, target, agent, sessionID, timestamp)
+	return fmt.Sprintf("%s-%s-%s-%s", command, target, agent, sessionID)
 }
 
 // createCommandResponse creates a base command response
@@ -775,4 +776,60 @@ func (rl *RateLimiter) getRemainingTime(sessionID string) time.Duration {
 		return 0
 	}
 	return remaining
+}
+
+// SessionResponse represents the response for session creation
+type SessionResponse struct {
+	SessionID string `json:"session_id"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+// handleGetSession handles the session creation API
+func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
+	// Only allow GET requests
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Generate new session ID
+	sessionID := h.generateSessionID()
+
+	// Create response
+	response := SessionResponse{
+		SessionID: sessionID,
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	// Set headers
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+
+	// Send response
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		logger.Errorf("Failed to encode session response: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+}
+
+// GenerateRandomString generates a random alphanumeric string of specified length
+func GenerateRandomString(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+	// Initialize random seed
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[rng.Intn(len(charset))]
+	}
+	return string(b)
+}
+
+// generateSessionID generates a unique session ID
+func (h *Handler) generateSessionID() string {
+	timestamp := time.Now().UnixMilli()
+	randomStr := GenerateRandomString(10)
+	return fmt.Sprintf("session_%d_%s", timestamp, randomStr)
 }

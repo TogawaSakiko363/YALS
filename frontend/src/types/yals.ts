@@ -22,6 +22,7 @@ export interface CommandResponse {
   error?: string;
   timestamp?: number;
   stopped?: boolean; // Indicates if command was stopped by user
+  ip_version?: string; // IP version used: "auto", "ipv4", or "ipv6"
 }
 
 export interface AgentGroup {
@@ -70,4 +71,7 @@ export interface CommandHistory {
   agent: string;
   timestamp: number;
   response?: CommandResponse;
+  ip_version?: string; // IP version: "auto", "ipv4", or "ipv6"
 }
+
+export type IPVersion = 'auto' | 'ipv4' | 'ipv6';

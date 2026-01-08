@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Agent, CommandResponse, CommandType, CommandHistory, AgentGroupData, CommandConfig } from '../types/yals';
+import { Agent, CommandResponse, CommandType, CommandHistory, AgentGroupData, CommandConfig, IPVersion } from '../types/yals';
 
 interface UseYalsClientOptions {
   serverUrl?: string;
@@ -244,16 +244,36 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
 
     setIsConnecting(true);
 
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<void>(async (resolve, reject) => {
       try {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const httpProtocol = window.location.protocol;
         
-        // Generate or retrieve session ID
+        // Fetch session ID from server API
         let sessionId = sessionStorage.getItem('yals_session_id');
+        
         if (!sessionId) {
-          // Generate a new session ID: timestamp + random string
-          sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+          const response = await fetch(`${httpProtocol}//${serverUrl}/api/session`, {
+            method: 'GET',
+            headers: {
+              'Accept': 'application/json',
+            },
+          });
+
+          if (!response.ok) {
+            throw new Error(`Failed to get session ID from server: ${response.status}`);
+          }
+
+          const data = await response.json();
+          sessionId = data.session_id;
+          
+          if (!sessionId) {
+            throw new Error('Server did not return a valid session ID');
+          }
+
+          // Store session ID in sessionStorage
           sessionStorage.setItem('yals_session_id', sessionId);
+          console.log('YALS: Received session ID from server:', sessionId);
         }
         
         // Include session ID in WebSocket URL path
@@ -324,7 +344,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     reconnectAttemptsRef.current = maxReconnectAttempts; // Prevent auto-reconnection
   }, [maxReconnectAttempts]);
 
-  const executeCommand = useCallback(async (command: CommandType, target: string): Promise<{ response: CommandResponse; realCommandId: string }> => {
+  const executeCommand = useCallback(async (command: CommandType, target: string, ipVersion: IPVersion = 'auto'): Promise<{ response: CommandResponse; realCommandId: string }> => {
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
       throw new Error('WebSocket not connected');
     }
@@ -356,7 +376,8 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       command,
       target: trimmedTarget,
       agent: selectedAgent,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      ip_version: ipVersion
     };
 
     setCommandHistory(prev => [historyEntry, ...prev.filter(h => h.id !== simpleCommandId)]);
@@ -365,7 +386,8 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       type: 'execute_command',
       agent: selectedAgent,
       command,
-      target: trimmedTarget
+      target: trimmedTarget,
+      ip_version: ipVersion
     };
 
     return new Promise((resolve, reject) => {
