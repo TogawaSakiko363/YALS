@@ -240,7 +240,6 @@ func (c *Client) resolveTargetIfNeeded(target string) string {
 	// Check if host is a domain name
 	inputType := validator.ValidateInput(host)
 	if inputType == validator.Domain {
-		logger.Infof("Resolving domain: %s", host)
 
 		// Resolve domain to IP
 		ips, err := validator.ResolveDomain(host)
@@ -251,7 +250,6 @@ func (c *Client) resolveTargetIfNeeded(target string) string {
 
 		if len(ips) > 0 {
 			resolvedIP := ips[0].String()
-			logger.Infof("Resolved %s to %s", host, resolvedIP)
 
 			// Reconstruct target with resolved IP
 			if port != "" {

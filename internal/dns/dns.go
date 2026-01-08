@@ -2,7 +2,6 @@ package dns
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,7 +14,7 @@ import (
 // DNSServer represents a DNS server configuration
 type DNSServer struct {
 	Name     string
-	Type     string // "dot", "doh", "tls"
+	Type     string // "doh" only
 	Address  string
 	Port     int
 	Latency  time.Duration
@@ -45,27 +44,21 @@ func GetResolver() *DNSResolver {
 	return globalResolver
 }
 
-// NewDNSResolver creates a new DNS resolver with predefined servers
+// NewDNSResolver creates a new DNS resolver with predefined DoH servers
 func NewDNSResolver() *DNSResolver {
 	return &DNSResolver{
 		servers: []*DNSServer{
 			{
-				Name:    "Aliyun DoH",
+				Name:    "Alibaba",
 				Type:    "doh",
-				Address: "https://223.5.5.5/dns-query",
+				Address: "https://223.5.5.5/resolve",
 				Port:    443,
 			},
 			{
-				Name:    "Google DoT",
-				Type:    "dot",
-				Address: "8.8.8.8",
-				Port:    853,
-			},
-			{
-				Name:    "Cloudflare TLS",
-				Type:    "tls",
-				Address: "1.1.1.1",
-				Port:    853,
+				Name:    "Google",
+				Type:    "doh",
+				Address: "https://8.8.8.8/resolve",
+				Port:    443,
 			},
 		},
 		currentIndex: 0,
@@ -103,7 +96,7 @@ func (r *DNSResolver) Stop() {
 // testAllServers tests latency for all DNS servers
 func (r *DNSResolver) testAllServers() {
 	var wg sync.WaitGroup
-	testDomain := "www.bing.com"
+	testDomain := "www.google.com"
 
 	for _, server := range r.servers {
 		wg.Add(1)
@@ -111,7 +104,7 @@ func (r *DNSResolver) testAllServers() {
 			defer wg.Done()
 
 			start := time.Now()
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 
 			_, err := r.resolveWithServer(ctx, testDomain, srv)
@@ -121,7 +114,7 @@ func (r *DNSResolver) testAllServers() {
 			if err == nil {
 				srv.Latency = elapsed
 			} else {
-				srv.Latency = time.Hour // Set high latency on failure
+				srv.Latency = 10 * time.Second // Set high latency on failure
 			}
 			srv.LastTest = time.Now()
 			r.mutex.Unlock()
@@ -154,24 +147,51 @@ func (r *DNSResolver) selectFastestServer() {
 
 // Resolve resolves a domain name to IP addresses using the fastest server
 func (r *DNSResolver) Resolve(ctx context.Context, domain string) ([]net.IP, error) {
+	// Create a context with timeout if not already set
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+	}
+
 	r.mutex.RLock()
 	currentServer := r.servers[r.currentIndex]
 	r.mutex.RUnlock()
 
-	// Try current fastest server
+	// Try current fastest server first
 	ips, err := r.resolveWithServer(ctx, domain, currentServer)
-	if err == nil {
+	if err == nil && len(ips) > 0 {
 		return ips, nil
 	}
 
-	// Fallback: try all servers
+	// Fallback: try all other servers in parallel
+	type result struct {
+		ips []net.IP
+		err error
+	}
+
+	resultChan := make(chan result, len(r.servers))
+
 	for _, server := range r.servers {
 		if server == currentServer {
 			continue
 		}
-		ips, err := r.resolveWithServer(ctx, domain, server)
-		if err == nil {
-			return ips, nil
+
+		go func(srv *DNSServer) {
+			ips, err := r.resolveWithServer(ctx, domain, srv)
+			resultChan <- result{ips: ips, err: err}
+		}(server)
+	}
+
+	// Wait for first successful result or all failures
+	for i := 0; i < len(r.servers)-1; i++ {
+		select {
+		case res := <-resultChan:
+			if res.err == nil && len(res.ips) > 0 {
+				return res.ips, nil
+			}
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
 
@@ -181,78 +201,75 @@ func (r *DNSResolver) Resolve(ctx context.Context, domain string) ([]net.IP, err
 
 // resolveWithServer resolves using a specific DNS server
 func (r *DNSResolver) resolveWithServer(ctx context.Context, domain string, server *DNSServer) ([]net.IP, error) {
-	switch server.Type {
-	case "dot":
-		return r.resolveDoT(ctx, domain, server)
-	case "doh":
+	if server.Type == "doh" {
 		return r.resolveDoH(ctx, domain, server)
-	case "tls":
-		return r.resolveDoT(ctx, domain, server) // DoT and TLS use same method
-	default:
-		return nil, fmt.Errorf("unknown DNS server type: %s", server.Type)
 	}
+	return nil, fmt.Errorf("unknown DNS server type: %s", server.Type)
 }
 
-// resolveDoT resolves using DNS over TLS
-func (r *DNSResolver) resolveDoT(ctx context.Context, domain string, server *DNSServer) ([]net.IP, error) {
-	// Create TLS connection with context
-	dialer := &net.Dialer{
-		Timeout: 5 * time.Second,
+// resolveDoH resolves using DNS over HTTPS (queries both A and AAAA records)
+func (r *DNSResolver) resolveDoH(ctx context.Context, domain string, server *DNSServer) ([]net.IP, error) {
+	client := &http.Client{
+		Timeout: 3 * time.Second,
+		Transport: &http.Transport{
+			DisableKeepAlives:   false,
+			MaxIdleConns:        10,
+			MaxIdleConnsPerHost: 5,
+			IdleConnTimeout:     90 * time.Second,
+		},
 	}
 
-	// Use context deadline if available
-	deadline, hasDeadline := ctx.Deadline()
-	if hasDeadline {
-		timeout := time.Until(deadline)
-		if timeout > 0 && timeout < dialer.Timeout {
-			dialer.Timeout = timeout
+	// Query both A (IPv4) and AAAA (IPv6) records in parallel
+	type queryResult struct {
+		ips []net.IP
+		err error
+	}
+
+	resultChan := make(chan queryResult, 2)
+
+	// Query A record (IPv4)
+	go func() {
+		ips, err := r.queryDoH(ctx, client, server.Address, domain, "A")
+		resultChan <- queryResult{ips: ips, err: err}
+	}()
+
+	// Query AAAA record (IPv6)
+	go func() {
+		ips, err := r.queryDoH(ctx, client, server.Address, domain, "AAAA")
+		resultChan <- queryResult{ips: ips, err: err}
+	}()
+
+	// Collect results from both queries
+	var allIPs []net.IP
+	var lastErr error
+
+	for i := 0; i < 2; i++ {
+		select {
+		case res := <-resultChan:
+			if res.err == nil {
+				allIPs = append(allIPs, res.ips...)
+			} else {
+				lastErr = res.err
+			}
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
 
-	conn, err := tls.DialWithDialer(dialer, "tcp", fmt.Sprintf("%s:%d", server.Address, server.Port), &tls.Config{
-		ServerName: server.Address,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to DoT server: %v", err)
-	}
-	defer conn.Close()
-
-	// Build DNS query (simplified - A record query)
-	query := buildDNSQuery(domain)
-
-	// Send query with deadline
-	queryDeadline := time.Now().Add(5 * time.Second)
-	if hasDeadline && deadline.Before(queryDeadline) {
-		queryDeadline = deadline
+	if len(allIPs) == 0 {
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, fmt.Errorf("no IP addresses found in DoH response")
 	}
 
-	if err := conn.SetDeadline(queryDeadline); err != nil {
-		return nil, err
-	}
-
-	if _, err := conn.Write(query); err != nil {
-		return nil, fmt.Errorf("failed to send DNS query: %v", err)
-	}
-
-	// Read response
-	response := make([]byte, 512)
-	n, err := conn.Read(response)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read DNS response: %v", err)
-	}
-
-	// Parse response
-	return parseDNSResponse(response[:n])
+	return allIPs, nil
 }
 
-// resolveDoH resolves using DNS over HTTPS
-func (r *DNSResolver) resolveDoH(ctx context.Context, domain string, server *DNSServer) ([]net.IP, error) {
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-	}
-
+// queryDoH performs a single DoH query for a specific record type
+func (r *DNSResolver) queryDoH(ctx context.Context, client *http.Client, serverAddr, domain, recordType string) ([]net.IP, error) {
 	// Build DoH request URL
-	url := fmt.Sprintf("%s?name=%s&type=A", server.Address, domain)
+	url := fmt.Sprintf("%s?name=%s&type=%s", serverAddr, domain, recordType)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -280,6 +297,7 @@ func (r *DNSResolver) resolveDoH(ctx context.Context, domain string, server *DNS
 	var dohResp struct {
 		Answer []struct {
 			Data string `json:"data"`
+			Type int    `json:"type"`
 		} `json:"Answer"`
 	}
 
@@ -289,105 +307,12 @@ func (r *DNSResolver) resolveDoH(ctx context.Context, domain string, server *DNS
 
 	var ips []net.IP
 	for _, answer := range dohResp.Answer {
-		if ip := net.ParseIP(answer.Data); ip != nil {
-			ips = append(ips, ip)
-		}
-	}
-
-	if len(ips) == 0 {
-		return nil, fmt.Errorf("no IP addresses found in DoH response")
-	}
-
-	return ips, nil
-}
-
-// buildDNSQuery builds a simple DNS A record query
-func buildDNSQuery(domain string) []byte {
-	// DNS query format (simplified)
-	// This is a basic implementation - for production use a proper DNS library
-	query := []byte{
-		0x00, 0x00, // Length (will be set later)
-		0x00, 0x01, // Transaction ID
-		0x01, 0x00, // Flags: standard query
-		0x00, 0x01, // Questions: 1
-		0x00, 0x00, // Answer RRs: 0
-		0x00, 0x00, // Authority RRs: 0
-		0x00, 0x00, // Additional RRs: 0
-	}
-
-	// Add domain name
-	labels := []byte{}
-	for _, label := range []byte(domain) {
-		if label == '.' {
-			continue
-		}
-		labels = append(labels, label)
-	}
-
-	// Encode domain name (simplified)
-	parts := []string{}
-	currentPart := ""
-	for _, c := range domain {
-		if c == '.' {
-			if currentPart != "" {
-				parts = append(parts, currentPart)
-				currentPart = ""
-			}
-		} else {
-			currentPart += string(c)
-		}
-	}
-	if currentPart != "" {
-		parts = append(parts, currentPart)
-	}
-
-	for _, part := range parts {
-		query = append(query, byte(len(part)))
-		query = append(query, []byte(part)...)
-	}
-	query = append(query, 0x00) // End of domain name
-
-	// Query type (A record) and class (IN)
-	query = append(query, 0x00, 0x01, 0x00, 0x01)
-
-	// Set length
-	length := len(query) - 2
-	query[0] = byte(length >> 8)
-	query[1] = byte(length & 0xFF)
-
-	return query
-}
-
-// parseDNSResponse parses a DNS response (simplified)
-func parseDNSResponse(response []byte) ([]net.IP, error) {
-	if len(response) < 12 {
-		return nil, fmt.Errorf("response too short")
-	}
-
-	// Skip header and question section (simplified parsing)
-	// For production, use a proper DNS library like github.com/miekg/dns
-
-	var ips []net.IP
-
-	// Try to extract IP addresses from response
-	// This is a very simplified parser
-	for i := 12; i < len(response)-4; i++ {
-		// Look for A record (type 1) with 4-byte data
-		if i+6 < len(response) {
-			if response[i] == 0x00 && response[i+1] == 0x01 { // Type A
-				if i+10 < len(response) {
-					dataLen := int(response[i+8])<<8 | int(response[i+9])
-					if dataLen == 4 && i+10+dataLen <= len(response) {
-						ip := net.IPv4(response[i+10], response[i+11], response[i+12], response[i+13])
-						ips = append(ips, ip)
-					}
-				}
+		// Type 1 = A record (IPv4), Type 28 = AAAA record (IPv6)
+		if (recordType == "A" && answer.Type == 1) || (recordType == "AAAA" && answer.Type == 28) {
+			if ip := net.ParseIP(answer.Data); ip != nil {
+				ips = append(ips, ip)
 			}
 		}
-	}
-
-	if len(ips) == 0 {
-		return nil, fmt.Errorf("no IP addresses found in response")
 	}
 
 	return ips, nil
