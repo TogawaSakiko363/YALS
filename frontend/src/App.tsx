@@ -6,12 +6,13 @@ import { CommandPanel } from './components/CommandPanel';
 import { CommandHistory } from './components/CommandHistory';
 import { CommandType, IPVersion } from './types/yals';
 import { Github } from 'lucide-react';
-import { config } from './custom';
+import { CustomConfig } from './hooks/useCustomConfig';
 
-// Dynamically import logo - memoized
-const logo = new URL(config.logoPath, import.meta.url).href;
+interface AppProps {
+  config: CustomConfig;
+}
 
-function App() {
+function App({ config }: AppProps) {
   const {
     isConnected,
     isConnecting,
@@ -77,7 +78,7 @@ function App() {
           <div className="header-content">
             <div className="header-left">
               <div className="logo-container">
-                <img src={logo} alt="Logo" className="logo-image" />
+                <img src={config.logoPath} alt="Logo" className="logo-image" />
               </div>
               <div className="app-title">
                 <h1 className="title-large">Looking Glass</h1>

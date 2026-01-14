@@ -180,14 +180,13 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
                 </div>
 
                 {/* IP Version selector */}
-                <div className="command-select-container" style={{ minWidth: '100px' }}>
+                <div className="command-select-container">
                   <label className="command-label">IP Version</label>
                   <select
                     value={ipVersion}
                     onChange={(e) => setIpVersion(e.target.value as IPVersion)}
                     className="command-select"
                     disabled={!isConnected || !selectedAgent || isCommandActive}
-                    title="Select IP version for DNS resolution"
                   >
                     <option value="auto">Auto</option>
                     <option value="ipv4">IPv4</option>
@@ -264,11 +263,10 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
                     onChange={(e) => setIpVersion(e.target.value as IPVersion)}
                     className="command-select w-full"
                     disabled={!isConnected || !selectedAgent || isCommandActive}
-                    title="Select IP version for DNS resolution"
                   >
-                    <option value="auto">Auto (Prefer IPv4)</option>
-                    <option value="ipv4">IPv4 Only</option>
-                    <option value="ipv6">IPv6 Only</option>
+                    <option value="auto">Auto</option>
+                    <option value="ipv4">IPv4</option>
+                    <option value="ipv6">IPv6</option>
                   </select>
                 </div>
 
