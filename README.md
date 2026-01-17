@@ -102,11 +102,9 @@ agent:
 commands:
   ping:
     template: "ping -c 4"
-    description: "Network connectivity test"
   
   mtr:
     use_plugin: "mtr" # This function is for commercial versions only, we accept plugin customization
-    description: "Network route analysis"
 ```
 
 ## Usage

@@ -1,9 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useYalsClient } from './hooks/useYalsClient';
-import { ConnectionStatus } from './components/ConnectionStatus';
 import { AgentSelector } from './components/AgentSelector';
 import { CommandPanel } from './components/CommandPanel';
-import { CommandHistory } from './components/CommandHistory';
 import { CommandType, IPVersion } from './types/yals';
 import { Github } from 'lucide-react';
 import { CustomConfig } from './hooks/useCustomConfig';
@@ -18,16 +16,13 @@ function App({ config }: AppProps) {
     isConnecting,
     groups,
     selectedAgent,
-    commandHistory,
     activeCommands,
     streamingOutputs,
     appConfig,
     commands,
     connect,
-    disconnect,
     executeCommand,
     setSelectedAgent,
-    clearHistory,
     clearAllStreamingOutputs,
     stopCommand
   } = useYalsClient();
@@ -61,9 +56,19 @@ function App({ config }: AppProps) {
     // Find the first active command and stop it
     if (activeCommands.size > 0) {
       const firstActiveCommand = Array.from(activeCommands)[0];
+      
+      // Get current output before stopping
+      const currentOutput = streamingOutputs.get(firstActiveCommand) || '';
+      
+      // Stop the command
       stopCommand(firstActiveCommand);
+      
+      // Update latest output with stopped message
+      if (currentOutput) {
+        setLatestOutput(currentOutput + '\n\n*** Command Stopped ***');
+      }
     }
-  }, [activeCommands, stopCommand]);
+  }, [activeCommands, streamingOutputs, stopCommand]);
 
   const handleClearOutput = useCallback(() => {
     setLatestOutput(null);
@@ -84,23 +89,16 @@ function App({ config }: AppProps) {
                 <h1 className="title-large">Looking Glass</h1>
               </div>
             </div>
-            
-            <ConnectionStatus
-              isConnected={isConnected}
-              isConnecting={isConnecting}
-              onConnect={connect}
-              onDisconnect={disconnect}
-            />
           </div>
         </div>
       </header>
 
       {/* Main Content - flex-grow to fill available space */}
       <main className="main-content">
-        <div className="container max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 lg:py-6 w-full flex-1">
-          <div className="grid-container grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-6 h-full">
+        <div className="container">
+          <div className="grid-container">
             {/* Left Column - Agent Selection */}
-            <div className="lg:col-span-1">
+            <div className="agent-item-container">
               <AgentSelector
                 groups={groups}
                 selectedAgent={selectedAgent}
@@ -108,8 +106,8 @@ function App({ config }: AppProps) {
               />
             </div>
 
-            {/* Right Column - Command Panel and History */}
-            <div className="lg:col-span-2 space-y-4 sm:space-y-6 lg:space-y-6 flex flex-col">
+            {/* Right Column - Command Panel*/}
+            <div className="command-panel-container">
               <CommandPanel
                 selectedAgent={selectedAgent}
                 isConnected={isConnected}
@@ -119,13 +117,6 @@ function App({ config }: AppProps) {
                 onClearOutput={handleClearOutput}
                 latestOutput={latestOutput}
                 streamingOutputs={streamingOutputs}
-                commands={commands}
-              />
-
-              <CommandHistory
-                history={commandHistory}
-                activeCommands={activeCommands}
-                onClearHistory={clearHistory}
                 commands={commands}
               />
             </div>

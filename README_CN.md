@@ -102,11 +102,9 @@ agent:
 commands:
   ping:
     template: "ping -c 4"
-    description: "网络连通性测试"
   
   mtr:
     use_plugin: "mtr" # 插件功能仅限商业版本可用，接受插件定制
-    description: "网络路由分析"
 ```
 
 ## 使用方法

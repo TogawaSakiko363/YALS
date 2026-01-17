@@ -13,16 +13,18 @@ const (
 
 // GetVersionInfo Returns formatted version information
 func GetVersionInfo() string {
-	return fmt.Sprintf(
+	baseInfo := fmt.Sprintf(
 		"Version: %s\n"+
 			"Go Version: %s\n"+
 			"OS: %s\n"+
-			"Architecture: %s",
+			"Architecture: %s\n",
 		AppVersion,
 		runtime.Version(),
 		runtime.GOOS,
 		runtime.GOARCH,
 	)
+
+	return baseInfo
 }
 
 // GetAppName Returns the application name

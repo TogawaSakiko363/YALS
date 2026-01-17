@@ -105,7 +105,7 @@ func (r *DNSResolver) Stop() {
 // testAllServers tests latency for all DNS servers
 func (r *DNSResolver) testAllServers() {
 	var wg sync.WaitGroup
-	testDomain := "www.google.com"
+	testDomain := "www.bing.com"
 
 	for _, server := range r.servers {
 		wg.Add(1)

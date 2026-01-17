@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Agent, CommandResponse, CommandType, CommandHistory, AgentGroupData, CommandConfig, IPVersion } from '../types/yals';
+import { Agent, AgentCommand, CommandResponse, CommandType, CommandHistory, AgentGroupData, CommandConfig, IPVersion } from '../types/yals';
 
 interface UseYalsClientOptions {
   serverUrl?: string;
@@ -22,7 +22,8 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       return [];
     }
   });
-  // Local storage utility functions with debouncing
+  
+  // Local storage utility functions
   const getLocalStorage = (key: string): string | null => {
     try {
       return localStorage.getItem(key);
@@ -49,11 +50,8 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
   });
   const [activeCommands, setActiveCommands] = useState<Set<string>>(new Set());
   const [streamingOutputs, setStreamingOutputs] = useState<Map<string, string>>(new Map());
-  const [commandIdMapping, setCommandIdMapping] = useState<Map<string, string>>(new Map()); // Map simple ID to real backend ID
+  const [abortControllers, setAbortControllers] = useState<Map<string, AbortController>>(new Map()); // Map command ID to AbortController
 
-
-
-  const socketRef = useRef<WebSocket | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -79,181 +77,83 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     }
   }, [maxReconnectAttempts, reconnectDelay]);
 
-  const handleMessage = useCallback((data: string) => {
+  // Fetch nodes data from /api/node
+  const fetchNodesData = useCallback(async (sessionId: string) => {
     try {
-      const message = JSON.parse(data);
+      const protocol = window.location.protocol;
+      const response = await fetch(`${protocol}//${serverUrl}/api/node?session_id=${sessionId}`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
 
-      if (message.type === 'agent_status') {
-        const groupsData = message.groups || {};
-        setGroups(groupsData);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch nodes: ${response.status}`);
+      }
 
-        // Convert group data to agents list for backward compatibility
-        const allAgents: Agent[] = [];
-
-        if (Array.isArray(groupsData)) {
-          // New format: ordered array
-          groupsData.forEach(group => {
-            if (Array.isArray(group.agents)) {
-              allAgents.push(...group.agents);
-            }
-          });
-        } else {
-          // Old format: object
-          Object.values(groupsData).forEach((value: unknown) => {
-            if (Array.isArray(value)) {
-              const groupAgents = value as Agent[];
-              allAgents.push(...groupAgents);
-            }
-          });
+      const data = await response.json();
+      
+      // Update app config
+      setAppConfig({
+        version: data.version,
+        config: {
+          agents_total: data.total_nodes.toString(),
+          agents_online: data.online_nodes.toString(),
+          agents_offline: data.offline_nodes.toString(),
         }
+      });
 
-        setAgents(allAgents);
+      // Update groups
+      setGroups(data.groups || []);
 
-        // If no node selected and nodes available, select first online node
-        if (!selectedAgent && allAgents.length > 0) {
-          const onlineAgent = allAgents.find((agent: Agent) => agent.status === 1);
-          if (onlineAgent) {
-            setSelectedAgent(onlineAgent.name);
-            // Get commands for this agent
-            getAgentCommands(onlineAgent.name);
+      // Extract agents from groups
+      const allAgents: Agent[] = [];
+      if (Array.isArray(data.groups)) {
+        data.groups.forEach((group: any) => {
+          if (Array.isArray(group.agents)) {
+            allAgents.push(...group.agents);
           }
-        }
-      } else if (message.type === 'app_config') {
-        setAppConfig({
-          version: message.version,
-          config: message.config
-        });
-      } else if (message.type === 'commands_list') {
-        const commandsArray = message.commands || [];
-
-        // Keep as array to maintain server-returned order
-        const commandsList: CommandConfig[] = commandsArray.map((cmd: {
-          name: string;
-          description: string;
-          ignore_target?: boolean;
-        }) => ({
-          name: cmd.name,
-          description: cmd.description,
-          template: '', // Template is not sent to frontend
-          ignore_target: cmd.ignore_target || false
-        }));
-
-        setCommands(commandsList);
-        setLocalStorage('yals_commands', JSON.stringify(commandsList));
-      } else if (message.type === 'command_output') {
-        // Handle streaming command output
-        const commandId = `${message.command}-${message.target}-${message.agent}`;
-
-        // Update streaming output first (even if complete, to handle stopped messages)
-        if (message.output || message.error) {
-          setStreamingOutputs(prev => {
-            const newMap = new Map(prev);
-            const currentOutput = newMap.get(commandId) || '';
-            
-            // Check output mode - default to "replace" for better user experience
-            const outputMode = message.output_mode || 'replace';
-            
-            let newOutput: string;
-            if (outputMode === 'replace') {
-              // Replace mode: use new output directly
-              newOutput = message.error || message.output || '';
-            } else {
-              // Append mode: accumulate output (for stopped messages)
-              // Don't add extra newline if output already starts with newline
-              const separator = message.output && message.output.startsWith('\n') ? '' : (currentOutput ? '\n' : '');
-              newOutput = message.error ?
-                currentOutput + separator + message.error :
-                currentOutput + message.output;
-            }
-            
-            newMap.set(commandId, newOutput);
-            return newMap;
-          });
-        }
-
-        if (message.is_complete) {
-          // Command completed
-          setActiveCommands(prev => {
-            const newSet = new Set(prev);
-            newSet.delete(commandId);
-            return newSet;
-          });
-
-          // Don't update command history here, let executeCommand handle it
-          // The history will be updated when executeCommand resolves with the final output
-        }
-      } else if (message.command) {
-        // Handle command response
-        const commandId = `${message.command}-${message.target}-${message.agent}`;
-
-        setActiveCommands(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(commandId);
-          return newSet;
-        });
-
-        setCommandHistory(prev => {
-          const existingIndex = prev.findIndex(h => h.id === commandId);
-
-          const response: CommandResponse = {
-            success: message.success,
-            command: message.command,
-            target: message.target,
-            agent: message.agent,
-            output: message.output,
-            error: message.error,
-            timestamp: Date.now()
-          };
-
-          let updatedHistory;
-          if (existingIndex >= 0) {
-            const updated = [...prev];
-            updated[existingIndex] = { ...updated[existingIndex], response };
-            updatedHistory = updated;
-          } else {
-            // If new command, add to history
-            const newHistoryItem: CommandHistory = {
-              id: commandId,
-              command: message.command,
-              target: message.target,
-              agent: message.agent,
-              timestamp: Date.now(),
-              response
-            };
-            updatedHistory = [newHistoryItem, ...prev];
-          }
-
-          // Limit history size to avoid excessive growth
-          const limitedHistory = updatedHistory.slice(0, 100);
-
-          // Save to local storage
-          setLocalStorage('yals_command_history', JSON.stringify(limitedHistory));
-
-          return limitedHistory;
         });
       }
+      setAgents(allAgents);
+
+      // Auto-select first online agent if none selected
+      if (!selectedAgent && allAgents.length > 0) {
+        const onlineAgent = allAgents.find((agent: Agent) => agent.status === 1);
+        if (onlineAgent) {
+          setSelectedAgent(onlineAgent.name);
+          // Set commands from agent
+          const agentCommands = (onlineAgent as any).commands as AgentCommand[] | undefined;
+          if (agentCommands && Array.isArray(agentCommands)) {
+            const commandsList: CommandConfig[] = agentCommands.map((cmd: AgentCommand) => ({
+              name: typeof cmd === 'string' ? cmd : cmd.name,
+              description: typeof cmd === 'string' ? cmd : cmd.name,
+              template: '',
+              ignore_target: typeof cmd === 'string' ? false : (cmd.ignore_target || false)
+            }));
+            setCommands(commandsList);
+            setLocalStorage('yals_commands', JSON.stringify(commandsList));
+          }
+        }
+      }
     } catch (error) {
-      console.error('YALS: Message parsing error:', error);
+      console.error('YALS: Failed to fetch nodes data:', error);
     }
-  }, [selectedAgent]);
+  }, [serverUrl, selectedAgent, setLocalStorage]);
 
   const connect = useCallback(() => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      return Promise.resolve();
-    }
-
     setIsConnecting(true);
 
     return new Promise<void>(async (resolve, reject) => {
       try {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const httpProtocol = window.location.protocol;
+        const protocol = window.location.protocol;
         
         // Fetch session ID from server API
         let sessionId = sessionStorage.getItem('yals_session_id');
         
         if (!sessionId) {
-          const response = await fetch(`${httpProtocol}//${serverUrl}/api/session`, {
+          const response = await fetch(`${protocol}//${serverUrl}/api/session`, {
             method: 'GET',
             headers: {
               'Accept': 'application/json',
@@ -264,8 +164,8 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
             throw new Error(`Failed to get session ID from server: ${response.status}`);
           }
 
-          const data = await response.json();
-          sessionId = data.session_id;
+          const sessionData = await response.json();
+          sessionId = sessionData.session_id;
           
           if (!sessionId) {
             throw new Error('Server did not return a valid session ID');
@@ -276,57 +176,28 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
           console.log('YALS: Received session ID from server:', sessionId);
         }
         
-        // Include session ID in WebSocket URL path
-        const wsUrl = `${protocol}//${serverUrl}/ws/${sessionId}`;
+        // Fetch nodes data once on connect
+        await fetchNodesData(sessionId);
+        
+        setIsConnected(true);
+        setIsConnecting(false);
+        reconnectAttemptsRef.current = 0;
 
-        const socket = new WebSocket(wsUrl);
+        if (reconnectTimeoutRef.current) {
+          clearTimeout(reconnectTimeoutRef.current);
+          reconnectTimeoutRef.current = null;
+        }
 
-        socket.onopen = () => {
-          console.log('YALS: WebSocket connection established');
-          socketRef.current = socket;
-          setIsConnected(true);
-          setIsConnecting(false);
-          reconnectAttemptsRef.current = 0;
-
-          if (reconnectTimeoutRef.current) {
-            clearTimeout(reconnectTimeoutRef.current);
-            reconnectTimeoutRef.current = null;
-          }
-
-          // Get application config
-          const configRequest = JSON.stringify({ type: 'get_config' });
-          socket.send(configRequest);
-
-          // No longer auto-fetch global commands, get agent-specific commands when selecting agent
-
-          resolve();
-        };
-
-        socket.onclose = () => {
-          console.log('YALS: WebSocket connection closed');
-          setIsConnected(false);
-          setIsConnecting(false);
-          socketRef.current = null;
-
-          handleReconnect();
-        };
-
-        socket.onerror = (error) => {
-          console.error('YALS: WebSocket error:', error);
-          setIsConnecting(false);
-          reject(error);
-        };
-
-        socket.onmessage = (event) => {
-          handleMessage(event.data);
-        };
+        resolve();
       } catch (error) {
         console.error('YALS: Connection error:', error);
         setIsConnecting(false);
+        setIsConnected(false);
+        handleReconnect();
         reject(error);
       }
     });
-  }, [serverUrl, handleMessage, handleReconnect]);
+  }, [serverUrl, fetchNodesData, handleReconnect]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -334,23 +205,23 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       reconnectTimeoutRef.current = null;
     }
 
-    if (socketRef.current) {
-      socketRef.current.close();
-      socketRef.current = null;
-    }
-
     setIsConnected(false);
     setIsConnecting(false);
-    reconnectAttemptsRef.current = maxReconnectAttempts; // Prevent auto-reconnection
+    reconnectAttemptsRef.current = maxReconnectAttempts;
   }, [maxReconnectAttempts]);
 
   const executeCommand = useCallback(async (command: CommandType, target: string, ipVersion: IPVersion = 'auto'): Promise<{ response: CommandResponse; realCommandId: string }> => {
-    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket not connected');
+    if (!isConnected) {
+      throw new Error('Not connected to server');
     }
 
     if (!selectedAgent) {
       throw new Error('No node selected');
+    }
+
+    const sessionId = sessionStorage.getItem('yals_session_id');
+    if (!sessionId) {
+      throw new Error('No session ID available');
     }
 
     // Check if command requires target
@@ -362,15 +233,13 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     }
 
     const trimmedTarget = requiresTarget ? target.trim() : '';
-    const simpleCommandId = `${command}-${trimmedTarget}-${selectedAgent}`;
-    
-    // Real command ID will be received from backend
-    let realCommandId = '';
+    // Generate commandID with sessionID to match backend format
+    const simpleCommandId = `${command}-${trimmedTarget}-${selectedAgent}-${sessionId}`;
 
-    // Add to active commands set using simple ID
+    // Add to active commands
     setActiveCommands(prev => new Set(prev).add(simpleCommandId));
 
-    // Add to history using simple ID initially
+    // Add to history
     const historyEntry: CommandHistory = {
       id: simpleCommandId,
       command,
@@ -382,220 +251,184 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
 
     setCommandHistory(prev => [historyEntry, ...prev.filter(h => h.id !== simpleCommandId)]);
 
-    const request = {
-      type: 'execute_command',
-      agent: selectedAgent,
-      command,
-      target: trimmedTarget,
-      ip_version: ipVersion
-    };
+    const protocol = window.location.protocol;
+    const execUrl = `${protocol}//${serverUrl}/api/exec?session_id=${sessionId}`;
 
     return new Promise((resolve, reject) => {
-      let latestOutput = ''; // Store only the latest output frame
+      let accumulatedOutput = '';
+      let backendCommandId = '';
+      const abortController = new AbortController();
 
-      // No artificial timeout - let the command run as long as WebSocket connection is alive
-      // The command will complete when the backend sends is_complete=true or connection is lost
+      // Store abort controller for this command
+      setAbortControllers(prev => {
+        const newMap = new Map(prev);
+        newMap.set(simpleCommandId, abortController);
+        return newMap;
+      });
 
-      // Handle WebSocket connection loss
-      const connectionLostHandler = () => {
-        setActiveCommands(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(simpleCommandId);
-          return newSet;
-        });
-        if (realCommandId) {
-          setStreamingOutputs(prev => {
-            const newMap = new Map(prev);
-            newMap.delete(realCommandId);
-            return newMap;
-          });
+      // Use fetch to POST command, then listen to SSE
+      fetch(execUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+        },
+        body: JSON.stringify({
+          agent: selectedAgent,
+          command,
+          target: trimmedTarget,
+          ip_version: ipVersion
+        }),
+        signal: abortController.signal
+      }).then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
         }
-        reject(new Error('Connection lost during command execution'));
-      };
 
-      // Listen for connection close events
-      const originalOnClose = socketRef.current?.onclose;
-      if (socketRef.current) {
-        const currentSocket = socketRef.current;
-        currentSocket.onclose = (event) => {
-          connectionLostHandler();
-          if (originalOnClose) {
-            originalOnClose.call(currentSocket, event);
-          }
-        };
-      }
+        if (!response.body) {
+          throw new Error('Response body is null');
+        }
 
-      const messageHandler = (event: MessageEvent) => {
-        try {
-          const response = JSON.parse(event.data);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
 
-          // Handle streaming output chunks
-          if (response.type === 'command_output' &&
-            response.command === command &&
-            response.agent === selectedAgent &&
-            response.target === trimmedTarget &&
-            !response.is_complete) {
-
-            // Store latest output frame (replace mode)
-            if (response.output) {
-              latestOutput = response.output;
-            }
-            if (response.error) {
-              latestOutput = response.error;
-            }
-            
-            // Store real command ID from backend for stop functionality and output tracking
-            if (response.command_id && !realCommandId) {
-              realCommandId = response.command_id;
-              setCommandIdMapping(prev => {
-                const newMap = new Map(prev);
-                newMap.set(simpleCommandId, response.command_id);
-                return newMap;
-              });
-            }
-          }
-
-          // Handle streaming output completion
-          else if (response.type === 'command_output' &&
-            response.command === command &&
-            response.agent === selectedAgent &&
-            response.target === trimmedTarget &&
-            response.is_complete) {
-
-            socketRef.current?.removeEventListener('message', messageHandler);
-
-            // Restore original onclose handler
-            if (socketRef.current && originalOnClose) {
-              socketRef.current.onclose = originalOnClose;
-            }
-
-            // Small delay to ensure streamingOutputs state is updated
-            setTimeout(() => {
-              // Get the final output from streaming outputs using real command ID
-              let finalOutput = streamingOutputs.get(realCommandId) || latestOutput || '';
-              
-              // If command failed and there's an error message, use it as output
-              if (!response.success && response.error && !finalOutput) {
-                finalOutput = response.error;
-              }
-
-              const commandResponse: CommandResponse = {
-                success: response.success,
-                command: response.command,
-                target: response.target,
-                agent: response.agent,
-                output: finalOutput,
-                error: response.error,
-                timestamp: Date.now(),
-                stopped: response.stopped || false
-              };
-
-              // Update command history with final result
-              setCommandHistory(prev => {
-                const existingIndex = prev.findIndex(h => h.id === simpleCommandId);
-                if (existingIndex >= 0) {
-                  const updated = [...prev];
-                  const finalResponse = {
-                    ...commandResponse,
-                    output: finalOutput,
-                    stopped: response.stopped || false
-                  };
-
-                  updated[existingIndex] = {
-                    ...updated[existingIndex],
-                    response: finalResponse
-                  };
-
-                  // Save to localStorage
-                  setLocalStorage('yals_command_history', JSON.stringify(updated.slice(0, 100)));
-                  return updated;
-                }
-                return prev;
-              });
-
-              // Clean up active commands
+        const readStream = (): void => {
+          reader.read().then(({ done, value }) => {
+            if (done) {
+              // Stream ended
               setActiveCommands(prev => {
                 const newSet = new Set(prev);
                 newSet.delete(simpleCommandId);
                 return newSet;
               });
-
-              // Clean up streaming output
-              if (realCommandId) {
-                setStreamingOutputs(prev => {
-                  const newMap = new Map(prev);
-                  newMap.delete(realCommandId);
-                  return newMap;
-                });
-              }
-
-              // Clean up command ID mapping
-              setCommandIdMapping(prev => {
+              // Clean up abort controller
+              setAbortControllers(prev => {
                 const newMap = new Map(prev);
                 newMap.delete(simpleCommandId);
                 return newMap;
               });
-
-              if (response.success && !response.stopped) {
-                resolve({ response: commandResponse, realCommandId });
-              } else if (response.stopped) {
-                resolve({ response: commandResponse, realCommandId });
-              } else {
-                reject(new Error(response.error || 'Command execution failed'));
-              }
-            }, 50); // 50ms delay to ensure state update
-          }
-
-          // Handle legacy non-streaming response (fallback)
-          else if (response.command === command &&
-            response.agent === selectedAgent &&
-            response.target === trimmedTarget &&
-            !response.type) {
-
-            socketRef.current?.removeEventListener('message', messageHandler);
-
-            // Restore original onclose handler
-            if (socketRef.current && originalOnClose) {
-              socketRef.current.onclose = originalOnClose;
+              return;
             }
 
-            // If command failed and there's an error message, use it as output
-            const finalOutput = !response.success && response.error && !response.output 
-              ? response.error 
-              : response.output;
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n');
 
-            const commandResponse: CommandResponse = {
-              success: response.success,
-              command: response.command,
-              target: response.target,
-              agent: response.agent,
-              output: finalOutput,
-              error: response.error,
-              timestamp: Date.now()
-            };
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const data = line.substring(6);
+                try {
+                  const message = JSON.parse(data);
 
-            // Clean up
+                  if (message.type === 'output') {
+                    // Replace mode: directly use the output from backend
+                    accumulatedOutput = message.output || '';
+                    setStreamingOutputs(prev => {
+                      const newMap = new Map(prev);
+                      newMap.set(simpleCommandId, accumulatedOutput);
+                      return newMap;
+                    });
+                  } else if (message.type === 'error') {
+                    // Replace mode: directly use the error from backend
+                    accumulatedOutput = message.error || '';
+                    setStreamingOutputs(prev => {
+                      const newMap = new Map(prev);
+                      newMap.set(simpleCommandId, accumulatedOutput);
+                      return newMap;
+                    });
+                  } else if (message.type === 'complete') {
+                    const commandResponse: CommandResponse = {
+                      success: message.success,
+                      command,
+                      target: trimmedTarget,
+                      agent: selectedAgent,
+                      output: accumulatedOutput,
+                      error: message.error,
+                      timestamp: Date.now(),
+                      stopped: message.stopped || false
+                    };
+
+                    // Update history
+                    setCommandHistory(prev => {
+                      const existingIndex = prev.findIndex(h => h.id === simpleCommandId);
+                      if (existingIndex >= 0) {
+                        const updated = [...prev];
+                        updated[existingIndex] = {
+                          ...updated[existingIndex],
+                          response: commandResponse
+                        };
+                        setLocalStorage('yals_command_history', JSON.stringify(updated.slice(0, 100)));
+                        return updated;
+                      }
+                      return prev;
+                    });
+
+                    // Clean up active commands and abort controllers
+                    setActiveCommands(prev => {
+                      const newSet = new Set(prev);
+                      newSet.delete(simpleCommandId);
+                      return newSet;
+                    });
+
+                    setAbortControllers(prev => {
+                      const newMap = new Map(prev);
+                      newMap.delete(simpleCommandId);
+                      return newMap;
+                    });
+
+                    // Keep streaming output for display (don't delete it)
+                    // It will be shown until next command execution
+
+                    if (message.success || message.stopped) {
+                      resolve({ response: commandResponse, realCommandId: backendCommandId || simpleCommandId });
+                    } else {
+                      reject(new Error(message.error || 'Command execution failed'));
+                    }
+                    return;
+                  }
+                } catch (error) {
+                  console.error('Failed to parse SSE message:', error);
+                }
+              }
+            }
+
+            readStream();
+          }).catch(error => {
+            console.error('Stream reading error:', error);
             setActiveCommands(prev => {
               const newSet = new Set(prev);
               newSet.delete(simpleCommandId);
               return newSet;
             });
-
-            if (response.success) {
-              resolve({ response: commandResponse, realCommandId: realCommandId || simpleCommandId });
-            } else {
-              reject(new Error(response.error || 'Command execution failed'));
+            setAbortControllers(prev => {
+              const newMap = new Map(prev);
+              newMap.delete(simpleCommandId);
+              return newMap;
+            });
+            if (error.name !== 'AbortError') {
+              reject(error);
             }
-          }
-        } catch (error) {
-          // Ignore parsing errors
-        }
-      };
+          });
+        };
 
-      socketRef.current?.addEventListener('message', messageHandler);
-      socketRef.current?.send(JSON.stringify(request));
+        readStream();
+      }).catch(error => {
+        console.error('Command execution error:', error);
+        setActiveCommands(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(simpleCommandId);
+          return newSet;
+        });
+        setAbortControllers(prev => {
+          const newMap = new Map(prev);
+          newMap.delete(simpleCommandId);
+          return newMap;
+        });
+        if (error.name !== 'AbortError') {
+          reject(error);
+        }
+      });
     });
-  }, [selectedAgent, commands]);
+  }, [isConnected, selectedAgent, commands, serverUrl, setLocalStorage]);
 
   const clearHistory = useCallback(() => {
     setCommandHistory([]);
@@ -614,46 +447,92 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     setStreamingOutputs(new Map());
   }, []);
 
-  const getAgentCommands = useCallback((agentName: string) => {
-    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+  const stopCommand = useCallback(async (commandId: string) => {
+    const sessionId = sessionStorage.getItem('yals_session_id');
+    if (!sessionId) {
+      console.error('No session ID available');
       return;
     }
 
-    const request = {
-      type: 'get_agent_commands',
-      agent: agentName
-    };
+    // Get current streaming output before stopping
+    const currentOutput = streamingOutputs.get(commandId) || '';
 
-    socketRef.current.send(JSON.stringify(request));
-  }, []);
-
-  const stopCommand = useCallback((commandId: string) => {
-    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
-      return;
+    // First, abort the fetch request
+    const abortController = abortControllers.get(commandId);
+    if (abortController) {
+      abortController.abort();
     }
 
-    // Get the real backend command ID from mapping
-    const realCommandId = commandIdMapping.get(commandId) || commandId;
+    // Then send stop request to backend
+    const protocol = window.location.protocol;
+    const stopUrl = `${protocol}//${serverUrl}/api/stop?session_id=${sessionId}`;
 
-    // Send stop command to backend with real command ID
-    const stopRequest = {
-      type: 'stop_command',
-      command_id: realCommandId
-    };
+    try {
+      const response = await fetch(stopUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          command_id: commandId
+        })
+      });
 
-    socketRef.current.send(JSON.stringify(stopRequest));
+      if (!response.ok) {
+        console.error('Failed to stop command:', response.status);
+      } 
+    } catch (error) {
+      console.error('Error stopping command:', error);
+    }
 
-    // Clean up mapping after stop
-    setCommandIdMapping(prev => {
+    // Clean up local state FIRST (to update button state immediately)
+    setActiveCommands(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(commandId);
+      return newSet;
+    });
+
+    setAbortControllers(prev => {
       const newMap = new Map(prev);
       newMap.delete(commandId);
       return newMap;
     });
 
-    // Note: Don't immediately clean up state, wait for backend stop confirmation
-  }, [commandIdMapping]);
+    // Update command history with stopped status
+    setCommandHistory(prev => {
+      const existingIndex = prev.findIndex(h => h.id === commandId);
+      if (existingIndex >= 0) {
+        const updated = [...prev];
+        updated[existingIndex] = {
+          ...updated[existingIndex],
+          response: {
+            success: false,
+            command: updated[existingIndex].command,
+            target: updated[existingIndex].target,
+            agent: updated[existingIndex].agent,
+            output: currentOutput + '\n\n*** Command Stopped ***',
+            error: 'Command stopped by user',
+            timestamp: Date.now(),
+            stopped: true
+          }
+        };
+        setLocalStorage('yals_command_history', JSON.stringify(updated.slice(0, 100)));
+        return updated;
+      }
+      return prev;
+    });
 
-  // Write to Cookie when history updates (4KB limit, large history may be truncated)
+    // Clean up streaming outputs LAST (after history is updated)
+    // Don't clean immediately to allow App.tsx to read it
+    setTimeout(() => {
+      setStreamingOutputs(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(commandId);
+        return newMap;
+      });
+    }, 100);
+  }, [abortControllers, streamingOutputs, serverUrl, setLocalStorage]);
+
   useEffect(() => {
     try {
       document.cookie = `yals_command_history=${encodeURIComponent(JSON.stringify(commandHistory))}`;
@@ -669,12 +548,23 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
   const handleSetSelectedAgent = useCallback((agentName: string | null) => {
     setSelectedAgent(agentName);
     if (agentName) {
-      getAgentCommands(agentName);
+      // Get commands from selected agent
+      const agent = agents.find(a => a.name === agentName);
+      const agentCommands = agent ? (agent as any).commands as AgentCommand[] | undefined : undefined;
+      if (agent && agentCommands && Array.isArray(agentCommands)) {
+        const commandsList: CommandConfig[] = agentCommands.map((cmd: AgentCommand) => ({
+          name: typeof cmd === 'string' ? cmd : cmd.name,
+          description: typeof cmd === 'string' ? cmd : cmd.name,
+          template: '',
+          ignore_target: typeof cmd === 'string' ? false : (cmd.ignore_target || false)
+        }));
+        setCommands(commandsList);
+        setLocalStorage('yals_commands', JSON.stringify(commandsList));
+      }
     } else {
-      // If no agent selected, clear commands
       setCommands([]);
     }
-  }, [getAgentCommands]);
+  }, [agents, setLocalStorage]);
 
   return {
     isConnected,

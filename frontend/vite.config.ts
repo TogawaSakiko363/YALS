@@ -11,7 +11,7 @@ export default defineConfig({
   },
   build: {
     // Set output directory to web folder in project root
-    outDir: resolve(__dirname, '../web'),
+    outDir: resolve('../web'),
     // Enable code splitting
     rollupOptions: {
       output: {
@@ -27,3 +27,4 @@ export default defineConfig({
     chunkSizeWarningLimit: 1000
   }
 });
+

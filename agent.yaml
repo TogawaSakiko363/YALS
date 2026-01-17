@@ -22,15 +22,15 @@ agent:
 commands:
   ping:
     template: "ping -c 4"
-    description: "Network connectivity test"
 
   mtr:
     template: "mtr -rw -c 4"
-    description: "Network route and packet loss analysis"
+
+  traceroute:
+    template: "traceroute -Aq 1"
   
   # Example: Command that doesn't need target and has execution limit
   # geekbench6:
   #   template: "echo 'Running Geekbench 6 test, please wait...' && /opt/geekbench6/geekbench6 --single-core --no-upload | awk '/CPU Information/{p=1} p && /Name|Base Frequency/{print} /Benchmark Summary/{p=2;print;next} p==2&&/Floating Point Score/{print;exit} p==2{print}'"
-  #   description: "Geekbench 6 CPU benchmark"
   #   ignore_target: true  # Target address is not needed
   #   maxmium_queue: 1     # Maximum 1 concurrent execution

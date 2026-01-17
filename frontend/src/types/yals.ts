@@ -5,12 +5,18 @@ export interface AgentDetails {
   description: string;
 }
 
+export interface AgentCommand {
+  name: string;
+  ignore_target?: boolean;
+}
+
 export interface Agent {
   name: string;
   status: number;
   location?: string;
   description?: string;
   details?: AgentDetails;
+  commands?: AgentCommand[];
 }
 
 export interface CommandResponse {
@@ -47,7 +53,6 @@ export interface YalsMessage {
   output?: string;
   error?: string;
   is_complete?: boolean;
-  output_mode?: string; // "append" or "replace"
   stopped?: boolean; // Indicates if command was stopped by user
 }
 

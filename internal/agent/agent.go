@@ -269,7 +269,7 @@ func (m *Manager) ExecuteCommand(agentName, command string) (string, error) {
 		return "", err
 	}
 
-	// Send command request
+	// Send command request with default IP version
 	req := buildCommandRequest(commandName, target, commandID, "auto")
 
 	if err := agent.conn.WriteJSON(req); err != nil {
@@ -323,6 +323,9 @@ func (m *Manager) ExecuteCommandStreamingWithStopAndID(agentName, command, comma
 	if !exists {
 		return fmt.Errorf("command not found: %s", commandName)
 	}
+
+	// Note: Queue limit checking is now handled by agent-side plugins
+	// Server no longer enforces queue limits to allow plugins to provide custom messages
 
 	// Handle ignore_target: if ignore_target is true, don't send target parameter
 	if cmdConfig.IgnoreTarget {
@@ -378,11 +381,14 @@ func (m *Manager) buildAgentInfo(name string, agent *Agent) map[string]any {
 		frontendStatus = 1
 	}
 
-	// Get command list
+	// Get command list with details
 	agent.commandsLock.RLock()
-	commands := make([]string, len(agent.availableCommands))
+	commands := make([]map[string]any, len(agent.availableCommands))
 	for i, cmd := range agent.availableCommands {
-		commands[i] = cmd.Name
+		commands[i] = map[string]any{
+			"name":          cmd.Name,
+			"ignore_target": cmd.IgnoreTarget,
+		}
 	}
 	agent.commandsLock.RUnlock()
 
@@ -534,7 +540,6 @@ func (m *Manager) GetAgentCommands(agentName string) []validator.CommandDetail {
 	for i, cmd := range agent.availableCommands {
 		commands[i] = validator.CommandDetail{
 			Name:         cmd.Name,
-			Description:  cmd.Description,
 			IgnoreTarget: cmd.IgnoreTarget,
 		}
 	}
@@ -569,7 +574,6 @@ func (m *Manager) getAllConnectedAgentCommands() map[string]validator.CommandDet
 			for _, cmd := range agent.availableCommands {
 				commandMap[cmd.Name] = validator.CommandDetail{
 					Name:         cmd.Name,
-					Description:  cmd.Description,
 					IgnoreTarget: cmd.IgnoreTarget,
 				}
 			}

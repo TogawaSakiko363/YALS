@@ -12,9 +12,9 @@ export interface CustomConfig {
 const defaultConfig: CustomConfig = {
   pageTitle: 'Yet Another Looking Glass',
   footerRightText: '© 2026 TogawaSakiko363',
-  faviconPath: '/images/logo.png',
-  logoPath: '/images/favicon.ico',
-  backgroundColor: '#f5f5f5ff'
+  faviconPath: '',
+  logoPath: '',
+  backgroundColor: '#ffffff'
 };
 
 export const useCustomConfig = () => {

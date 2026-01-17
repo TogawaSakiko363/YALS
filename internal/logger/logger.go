@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 )
 
@@ -59,20 +60,38 @@ type Logger struct {
 	error *log.Logger
 }
 
-// New creates a new Logger with the specified level
+func getPackageName(calldepth int) string {
+	pc, _, _, ok := runtime.Caller(calldepth)
+	if !ok {
+		return "unknown"
+	}
+	funcName := runtime.FuncForPC(pc).Name()
+	lastSlash := strings.LastIndex(funcName, "/")
+	if lastSlash == -1 {
+		lastSlash = 0
+	} else {
+		lastSlash++
+	}
+	dotIndex := strings.Index(funcName[lastSlash:], ".")
+	if dotIndex == -1 {
+		return funcName[lastSlash:]
+	}
+	return funcName[lastSlash : lastSlash+dotIndex]
+}
+
 func New(level LogLevel, output io.Writer) *Logger {
 	if output == nil {
 		output = os.Stdout
 	}
 
-	flags := log.Ldate | log.Ltime | log.Lshortfile
+	flags := log.Ldate | log.Ltime
 
 	return &Logger{
 		level: level,
-		debug: log.New(output, "[DEBUG] ", flags),
-		info:  log.New(output, "[INFO]  ", flags),
-		warn:  log.New(output, "[WARN]  ", flags),
-		error: log.New(output, "[ERROR] ", flags),
+		debug: log.New(output, "", flags),
+		info:  log.New(output, "", flags),
+		warn:  log.New(output, "", flags),
+		error: log.New(output, "", flags),
 	}
 }
 
@@ -89,10 +108,11 @@ func (l *Logger) GetLevel() LogLevel {
 // Debug logs a debug message
 func (l *Logger) Debug(v ...interface{}) {
 	if l.level <= DEBUG {
+		pkg := getPackageName(3)
 		if len(v) == 1 {
-			l.debug.Output(2, fmt.Sprint(v[0]))
+			l.debug.Output(3, fmt.Sprintf("[DEBUG] [%s]: %v", pkg, v[0]))
 		} else {
-			l.debug.Output(2, fmt.Sprint(v...))
+			l.debug.Output(3, fmt.Sprintf("[DEBUG] [%s]: %v", pkg, fmt.Sprint(v...)))
 		}
 	}
 }
@@ -100,17 +120,19 @@ func (l *Logger) Debug(v ...interface{}) {
 // Debugf logs a formatted debug message
 func (l *Logger) Debugf(format string, v ...interface{}) {
 	if l.level <= DEBUG && format != "" {
-		l.debug.Output(2, fmt.Sprintf(format, v...))
+		pkg := getPackageName(3)
+		l.debug.Output(3, fmt.Sprintf("[DEBUG] [%s]: %v", pkg, fmt.Sprintf(format, v...)))
 	}
 }
 
 // Info logs an info message
 func (l *Logger) Info(v ...interface{}) {
 	if l.level <= INFO {
+		pkg := getPackageName(3)
 		if len(v) == 1 {
-			l.info.Output(2, fmt.Sprint(v[0]))
+			l.info.Output(3, fmt.Sprintf("[INFO] [%s]: %v", pkg, v[0]))
 		} else {
-			l.info.Output(2, fmt.Sprint(v...))
+			l.info.Output(3, fmt.Sprintf("[INFO] [%s]: %v", pkg, fmt.Sprint(v...)))
 		}
 	}
 }
@@ -118,17 +140,19 @@ func (l *Logger) Info(v ...interface{}) {
 // Infof logs a formatted info message
 func (l *Logger) Infof(format string, v ...interface{}) {
 	if l.level <= INFO && format != "" {
-		l.info.Output(2, fmt.Sprintf(format, v...))
+		pkg := getPackageName(3)
+		l.info.Output(3, fmt.Sprintf("[INFO] [%s]: %v", pkg, fmt.Sprintf(format, v...)))
 	}
 }
 
 // Warn logs a warning message
 func (l *Logger) Warn(v ...interface{}) {
 	if l.level <= WARN {
+		pkg := getPackageName(3)
 		if len(v) == 1 {
-			l.warn.Output(2, fmt.Sprint(v[0]))
+			l.warn.Output(3, fmt.Sprintf("[WARN] [%s]: %v", pkg, v[0]))
 		} else {
-			l.warn.Output(2, fmt.Sprint(v...))
+			l.warn.Output(3, fmt.Sprintf("[WARN] [%s]: %v", pkg, fmt.Sprint(v...)))
 		}
 	}
 }
@@ -136,17 +160,19 @@ func (l *Logger) Warn(v ...interface{}) {
 // Warnf logs a formatted warning message
 func (l *Logger) Warnf(format string, v ...interface{}) {
 	if l.level <= WARN && format != "" {
-		l.warn.Output(2, fmt.Sprintf(format, v...))
+		pkg := getPackageName(3)
+		l.warn.Output(3, fmt.Sprintf("[WARN] [%s]: %v", pkg, fmt.Sprintf(format, v...)))
 	}
 }
 
 // Error logs an error message
 func (l *Logger) Error(v ...interface{}) {
 	if l.level <= ERROR {
+		pkg := getPackageName(3)
 		if len(v) == 1 {
-			l.error.Output(2, fmt.Sprint(v[0]))
+			l.error.Output(3, fmt.Sprintf("[ERROR] [%s]: %v", pkg, v[0]))
 		} else {
-			l.error.Output(2, fmt.Sprint(v...))
+			l.error.Output(3, fmt.Sprintf("[ERROR] [%s]: %v", pkg, fmt.Sprint(v...)))
 		}
 	}
 }
@@ -154,19 +180,26 @@ func (l *Logger) Error(v ...interface{}) {
 // Errorf logs a formatted error message
 func (l *Logger) Errorf(format string, v ...interface{}) {
 	if l.level <= ERROR && format != "" {
-		l.error.Output(2, fmt.Sprintf(format, v...))
+		pkg := getPackageName(3)
+		l.error.Output(3, fmt.Sprintf("[ERROR] [%s]: %v", pkg, fmt.Sprintf(format, v...)))
 	}
 }
 
 // Fatal logs an error message and exits the program
 func (l *Logger) Fatal(v ...interface{}) {
-	l.error.Output(2, fmt.Sprint(v...))
+	pkg := getPackageName(3)
+	if len(v) == 1 {
+		l.error.Output(3, fmt.Sprintf("[ERROR] [%s]: %v", pkg, v[0]))
+	} else {
+		l.error.Output(3, fmt.Sprintf("[ERROR] [%s]: %v", pkg, fmt.Sprint(v...)))
+	}
 	os.Exit(1)
 }
 
 // Fatalf logs a formatted error message and exits the program
 func (l *Logger) Fatalf(format string, v ...interface{}) {
-	l.error.Output(2, fmt.Sprintf(format, v...))
+	pkg := getPackageName(3)
+	l.error.Output(3, fmt.Sprintf("[ERROR] [%s]: %v", pkg, fmt.Sprintf(format, v...)))
 	os.Exit(1)
 }
 

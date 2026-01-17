@@ -137,27 +137,18 @@ export const AgentSelector: React.FC<AgentSelectorProps> = React.memo(({
   }, [onSelectAgent, expandedAgent]);
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+    <div className="bg-white shadow-sm border border-gray-200 p-4 rounded-md">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Server className="w-4 h-4 text-gray-600" />
-          <h2 className="text-base font-semibold text-gray-900">Node List</h2>
+          <h2 className="text-base font-semibold text-gray-900">Servers</h2>
           <span className="text-xs text-gray-500">({onlineAgents.length} online)</span>
         </div>
         <select
           value={selectedGroup}
-          onChange={(e) => setSelectedGroup(e.target.value)}
-          className="px-3 py-1.5 text-sm bg-white border border-gray-200 rounded-lg shadow-sm 
-                     hover:border-gray-300 hover:shadow-md focus:outline-none focus:ring-2 
-                     focus:ring-blue-500 focus:border-transparent transition-all duration-200 
-                     cursor-pointer appearance-none bg-no-repeat bg-right pr-8
-                     font-medium text-gray-700"
-          style={{
-            backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%239ca3af' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
-            backgroundPosition: 'right 0.5rem center',
-            backgroundSize: '1.25em 1.25em'
-          }}
-        >
+            onChange={(e) => setSelectedGroup(e.target.value)}
+            className="command-select"
+          >
           <option value="all" className="font-medium">All Nodes</option>
           {groupConfig.map(group => (
             <option key={group.name} value={group.name} className="font-medium">
@@ -169,7 +160,6 @@ export const AgentSelector: React.FC<AgentSelectorProps> = React.memo(({
 
       {filteredAgents.length === 0 ? (
         <div className="text-center py-6 text-gray-500">
-          <Server className="w-10 h-10 mx-auto mb-2 text-gray-300" />
           <p className="text-sm">No nodes available</p>
         </div>
       ) : (

@@ -6,14 +6,18 @@ import (
 	"YALS/internal/validator"
 	"bufio"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
 )
 
 // Shell operators that require bash execution
@@ -49,7 +53,6 @@ type CommandResponse struct {
 	Error      string `json:"error,omitempty"`
 	IsComplete bool   `json:"is_complete"`
 	IsError    bool   `json:"is_error"`
-	OutputMode string `json:"output_mode,omitempty"`
 }
 
 // NewClient creates a new agent client (deprecated, use NewClientWithConfig)
@@ -414,6 +417,8 @@ func (c *Client) accumulateOutputWithNotify(pipe interface{ Read([]byte) (int, e
 	scanner := bufio.NewScanner(pipe)
 	for scanner.Scan() {
 		line := scanner.Text()
+		// Convert GBK to UTF-8 on Windows to fix encoding issues
+		line = convertToUTF8(line)
 		mutex.Lock()
 		*lines = append(*lines, line)
 		mutex.Unlock()
@@ -427,8 +432,11 @@ func (c *Client) accumulateOutputWithNotify(pipe interface{ Read([]byte) (int, e
 	}
 
 	if err := scanner.Err(); err != nil && !isClosedPipeError(err) {
+		errorLine := fmt.Sprintf("Error reading output: %v", err)
+		// Convert error message as well
+		errorLine = convertToUTF8(errorLine)
 		mutex.Lock()
-		*lines = append(*lines, fmt.Sprintf("Error reading output: %v", err))
+		*lines = append(*lines, errorLine)
 		mutex.Unlock()
 
 		select {
@@ -484,11 +492,6 @@ func (c *Client) stopCommand(commandID string) {
 
 // sendCommandResponse sends a command response to the server
 func (c *Client) sendCommandResponse(conn *websocket.Conn, commandID, output, errorMsg string, isComplete, isError bool) {
-	c.sendCommandResponseWithMode(conn, commandID, output, errorMsg, isComplete, isError, "append")
-}
-
-// sendCommandResponseWithMode sends a command response to the server with specified output mode
-func (c *Client) sendCommandResponseWithMode(conn *websocket.Conn, commandID, output, errorMsg string, isComplete, isError bool, outputMode string) {
 	resp := CommandResponse{
 		Type:       "command_output",
 		CommandID:  commandID,
@@ -496,7 +499,6 @@ func (c *Client) sendCommandResponseWithMode(conn *websocket.Conn, commandID, ou
 		Error:      errorMsg,
 		IsComplete: isComplete,
 		IsError:    isError,
-		OutputMode: outputMode,
 	}
 
 	if err := conn.WriteJSON(resp); err != nil {
@@ -504,9 +506,9 @@ func (c *Client) sendCommandResponseWithMode(conn *websocket.Conn, commandID, ou
 	}
 }
 
-// sendOutput sends command output to the server (uses replace mode by default)
+// sendOutput sends command output to the server (uses replace mode)
 func (c *Client) sendOutput(conn *websocket.Conn, commandID, output string, isError bool) {
-	c.sendCommandResponseWithMode(conn, commandID, output, "", false, isError, "replace")
+	c.sendCommandResponse(conn, commandID, output, "", false, isError)
 }
 
 // sendError sends an error message to the server
@@ -529,4 +531,21 @@ func isClosedPipeError(err error) bool {
 		strings.Contains(errStr, "broken pipe") ||
 		strings.Contains(errStr, "use of closed file") ||
 		err == os.ErrClosed
+}
+
+// convertToUTF8 converts the input string from GBK to UTF-8 if running on Windows
+func convertToUTF8(input string) string {
+	if runtime.GOOS != "windows" {
+		return input
+	}
+
+	// Try to convert from GBK to UTF-8
+	decoder := simplifiedchinese.GBK.NewDecoder()
+	reader := transform.NewReader(strings.NewReader(input), decoder)
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		// If conversion fails, return original string
+		return input
+	}
+	return string(output)
 }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Play, Terminal, Loader2 } from 'lucide-react';
+import { Play, Loader2 } from 'lucide-react';
 import { CommandType, CommandConfig, IPVersion } from '../types/yals';
+import { AnsiTerminal } from './AnsiTerminal';
 
 interface CommandPanelProps {
   selectedAgent: string | null;
@@ -34,7 +35,6 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
   const [selectedCommand, setSelectedCommand] = useState<CommandType>('ping');
   const [target, setTarget] = useState('');
   const [ipVersion, setIpVersion] = useState<IPVersion>('auto');
-  const [isExecuting, setIsExecuting] = useState(false);
   const [queueLimitError, setQueueLimitError] = useState<string | null>(null);
 
   // Convert commands array to CommandOption array (maintains order) - memoized
@@ -61,7 +61,6 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
     if (requiresTarget && !target.trim()) return;
     if (!selectedAgent || !isConnected) return;
 
-    setIsExecuting(true);
     setQueueLimitError(null); // Clear previous error
     
     try {
@@ -72,8 +71,6 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
       if (error.message && error.message.includes('execution limit')) {
         setQueueLimitError(error.message);
       }
-    } finally {
-      setIsExecuting(false);
     }
   }, [commandOptions, selectedCommand, target, ipVersion, selectedAgent, isConnected, onExecuteCommand]);
 
@@ -91,15 +88,10 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
   );
   const requiresTarget = !currentCommand?.ignore_target;
   
-  const canExecute = useMemo(() => 
-    isConnected && selectedAgent && (requiresTarget ? target.trim() : true) && !isExecuting,
-    [isConnected, selectedAgent, requiresTarget, target, isExecuting]
-  );
-  
-  const commandId = useMemo(() => 
-    `${selectedCommand}-${requiresTarget ? target.trim() : ''}-${selectedAgent}`,
-    [selectedCommand, requiresTarget, target, selectedAgent]
-  );
+  const commandId = useMemo(() => {
+    const sessionId = sessionStorage.getItem('yals_session_id') || '';
+    return `${selectedCommand}-${requiresTarget ? target.trim() : ''}-${selectedAgent}-${sessionId}`;
+  }, [selectedCommand, requiresTarget, target, selectedAgent]);
   
   const isCommandActive = useMemo(() => 
     activeCommands.has(commandId),
@@ -128,45 +120,53 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
     <div className="command-panel-container">
       {/* Command Panel container */}
       <div className="command-test-container">
-        <div className="panel-title">
-          <Terminal className="panel-title-icon" />
-          <h2 className="panel-title-text">Command Panel</h2>
-        </div>
 
-        <div className="space-y-4">
+        <div className="space-y-2">
           {!hasCommands && (
-            <div className="text-center py-8 text-gray-500">
-              <Terminal className="w-12 h-12 mx-auto mb-2 text-gray-300" />
+            <div className="text-center py-6 text-gray-500">
               <p>No commands available</p>
             </div>
           )}
 
           {hasCommands && (
-            <div className="space-y-3">
+            <div className="space-y-2">
               {/* Desktop layout: horizontal arrangement */}
               <div className="command-actions-desktop">
-                {/* Command selection dropdown */}
-                <div className="command-select-container">
-                  <label className="command-label">Command Type</label>
-                  <select
-                    value={selectedCommand}
-                    onChange={(e) => setSelectedCommand(e.target.value as CommandType)}
-                    className="command-select"
-                    disabled={!isConnected || !selectedAgent || isCommandActive}
-                  >
-                    {commandOptions.map((cmd) => (
-                      <option key={cmd.value} value={cmd.value}>
-                        {cmd.label}
-                      </option>
-                    ))}
-                  </select>
+                {/* Command selection and IP Version in a row */}
+                <div className="command-select-row">
+                  {/* Command selection dropdown */}
+                  <div className="command-select-container">
+                    <select
+                      value={selectedCommand}
+                      onChange={(e) => setSelectedCommand(e.target.value as CommandType)}
+                      className="command-select"
+                      disabled={!isConnected || !selectedAgent || isCommandActive}
+                    >
+                      {commandOptions.map((cmd) => (
+                        <option key={cmd.value} value={cmd.value}>
+                          {cmd.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* IP Version selector */}
+                  <div className="command-select-container">
+                    <select
+                      value={ipVersion}
+                      onChange={(e) => setIpVersion(e.target.value as IPVersion)}
+                      className="command-select"
+                      disabled={!isConnected || !selectedAgent || isCommandActive}
+                    >
+                      <option value="auto">Auto</option>
+                      <option value="ipv4">IPv4</option>
+                      <option value="ipv6">IPv6</option>
+                    </select>
+                  </div>
                 </div>
 
                 {/* Target input - takes remaining space */}
                 <div className="command-target-container">
-                  <label htmlFor="target-desktop" className="command-label">
-                    Target Address
-                  </label>
                   <input
                     id="target-desktop"
                     type="text"
@@ -179,21 +179,6 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
                   />
                 </div>
 
-                {/* IP Version selector */}
-                <div className="command-select-container">
-                  <label className="command-label">IP Version</label>
-                  <select
-                    value={ipVersion}
-                    onChange={(e) => setIpVersion(e.target.value as IPVersion)}
-                    className="command-select"
-                    disabled={!isConnected || !selectedAgent || isCommandActive}
-                  >
-                    <option value="auto">Auto</option>
-                    <option value="ipv4">IPv4</option>
-                    <option value="ipv6">IPv6</option>
-                  </select>
-                </div>
-
                 {/* Execute/Stop button */}
                 <div className="command-button-container">
                   <button
@@ -204,93 +189,17 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
                         handleExecute();
                       }
                     }}
-                    disabled={(!canExecute && !isCommandActive) || !onStopCommand}
+                    disabled={!isConnected || !selectedAgent || (requiresTarget && !target.trim())}
                     className={`command-button ${
-                      isCommandActive ? 'danger' : canExecute ? 'primary' : ''
+                      isCommandActive ? 'danger' : 'primary'
                     }`}
                   >
-                    {isExecuting || isCommandActive ? (
+                    {isCommandActive ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     ) : (
                       <Play className="w-3.5 h-3.5" />
                     )}
-                    {isExecuting || isCommandActive ? 'Stop' : 'Run'}
-                  </button>
-                </div>
-              </div>
-
-              {/* Mobile layout: vertical arrangement */}
-              <div className="command-actions-mobile">
-                {/* Command selection dropdown */}
-                <div>
-                  <label className="command-label">Command Type</label>
-                  <select
-                    value={selectedCommand}
-                    onChange={(e) => setSelectedCommand(e.target.value as CommandType)}
-                    className="command-select w-full"
-                    disabled={!isConnected || !selectedAgent || isCommandActive}
-                  >
-                    {commandOptions.map((cmd) => (
-                      <option key={cmd.value} value={cmd.value}>
-                        {cmd.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Target input */}
-                <div>
-                  <label htmlFor="target-mobile" className="command-label">
-                    Target Address
-                  </label>
-                  <input
-                    id="target-mobile"
-                    type="text"
-                    value={requiresTarget ? target : ''}
-                    onChange={(e) => requiresTarget && setTarget(e.target.value)}
-                    onKeyDown={requiresTarget ? handleKeyDown : undefined}
-                    placeholder={requiresTarget ? "Enter the target" : "No target required"}
-                    className="command-target-input"
-                    disabled={!requiresTarget || !isConnected || !selectedAgent || isCommandActive}
-                  />
-                </div>
-
-                {/* IP Version selector */}
-                <div>
-                  <label className="command-label">IP Version</label>
-                  <select
-                    value={ipVersion}
-                    onChange={(e) => setIpVersion(e.target.value as IPVersion)}
-                    className="command-select w-full"
-                    disabled={!isConnected || !selectedAgent || isCommandActive}
-                  >
-                    <option value="auto">Auto</option>
-                    <option value="ipv4">IPv4</option>
-                    <option value="ipv6">IPv6</option>
-                  </select>
-                </div>
-
-                {/* Execute/Stop button */}
-                <div>
-                  <button
-                    onClick={() => {
-                      if (isCommandActive) {
-                        onStopCommand?.();
-                      } else {
-                        handleExecute();
-                      }
-                    }}
-                    disabled={(!canExecute && !isCommandActive) || !onStopCommand}
-                    className={`command-button command-button-full-width ${
-                      isCommandActive ? 'danger' : canExecute ? 'primary' : ''
-                    }`}
-                  >
-                    {isExecuting || isCommandActive ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Play className="w-3.5 h-3.5" />
-                    )}
-                    {isExecuting || isCommandActive ? 'Stop' : 'Run'}
+                    {isCommandActive ? 'Stop' : 'Run'}
                   </button>
                 </div>
               </div>
@@ -303,17 +212,6 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
               {queueLimitError}
             </div>
           )}
-
-          {/* Status indicator */}
-          <div className="command-status">
-            {!isConnected ? (
-              <span className="command-status error">Please connect to server first</span>
-            ) : !selectedAgent ? (
-              <span className="command-status warning">Please select a node</span>
-            ) : (
-              <span>Node: <strong>{selectedAgent}</strong>   Command: {commandOptions.find(cmd => cmd.value === selectedCommand)?.description || 'Unknown'}</span>
-            )}
-          </div>
         </div>
       </div>
 
@@ -326,15 +224,10 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
             <div className="terminal-dot yellow"></div>
             <div className="terminal-dot green"></div>
           </div>
-          <div className="terminal-title">
-            <span className="terminal-title-text">Terminal</span>
-          </div>
         </div>
 
-        {/* Terminal Content */}
-        <div className="terminal-content">
-          {outputText}
-        </div>
+        {/* Terminal Content with ANSI color support */}
+        <AnsiTerminal content={outputText} className="terminal-content" />
       </div>
     </div>
   );

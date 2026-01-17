@@ -141,7 +141,9 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux, webDir string) {
 
 	mux.HandleFunc("/", h.handleIndex)
 	mux.HandleFunc("/api/session", h.handleGetSession)
-	mux.HandleFunc("/ws/", h.handleWebSocket)
+	mux.HandleFunc("/api/node", h.handleGetNodes)
+	mux.HandleFunc("/api/exec", h.handleExecCommand)
+	mux.HandleFunc("/api/stop", h.handleStopCommand)
 	mux.HandleFunc("/ws/agent", h.handleAgentWebSocket)
 
 	fs := http.FileServer(http.Dir(webDir))
@@ -162,7 +164,7 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if r.Header.Get("Accept") != "" && !strings.Contains(r.Header.Get("Accept"), "application/json") {
+		if r.Header.Get("Accept") != "" && !strings.Contains(r.Header.Get("Accept"), "application/html") {
 			indexPath := filepath.Join(h.webDir, "index.html")
 			http.ServeFile(w, r, indexPath)
 			return
@@ -171,48 +173,6 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-}
-
-// handleWebSocket handles WebSocket connections from web clients
-func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	clientIP := h.getRealIP(r)
-
-	var sessionID string
-	path := strings.TrimPrefix(r.URL.Path, "/ws/")
-
-	if path != "" && path != r.URL.Path {
-		sessionID = path
-	} else {
-		sessionID = r.URL.Query().Get("sessionId")
-	}
-
-	if sessionID == "" {
-		sessionID = fmt.Sprintf("session_%d_%s", time.Now().UnixNano(), clientIP)
-	}
-
-	conn, err := h.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		logger.Errorf("Failed to upgrade connection: %v", err)
-		return
-	}
-
-	h.clientsLock.Lock()
-	h.clients[conn] = true
-	h.clientIPs[conn] = clientIP
-	h.clientSessions[conn] = sessionID
-	h.sessionConns[sessionID] = conn
-	h.clientsLock.Unlock()
-
-	conn.SetReadLimit(32768)
-	conn.SetReadDeadline(time.Now().Add(h.pongWait))
-	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(h.pongWait))
-		return nil
-	})
-
-	h.sendAgentStatus(conn)
-	go h.pingClient(conn)
-	go h.readPump(conn, clientIP)
 }
 
 // handleAgentWebSocket handles WebSocket connections from agents
@@ -264,31 +224,6 @@ func (h *Handler) getRealIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// pingClient sends periodic pings to the client
-func (h *Handler) pingClient(conn *websocket.Conn) {
-	ticker := time.NewTicker(h.pingInterval)
-	defer func() {
-		ticker.Stop()
-		conn.Close()
-
-		h.clientsLock.Lock()
-		sessionID := h.clientSessions[conn]
-		delete(h.clients, conn)
-		delete(h.clientIPs, conn)
-		delete(h.clientSessions, conn)
-		if sessionID != "" {
-			delete(h.sessionConns, sessionID)
-		}
-		h.clientsLock.Unlock()
-	}()
-
-	for range ticker.C {
-		if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(10*time.Second)); err != nil {
-			return
-		}
-	}
-}
-
 // pingAgent sends periodic pings to keep agent connection alive
 func (h *Handler) pingAgent(conn *websocket.Conn) {
 	ticker := time.NewTicker(h.pingInterval)
@@ -306,387 +241,9 @@ func (h *Handler) pingAgent(conn *websocket.Conn) {
 	}
 }
 
-// readPump handles incoming messages from the client
-func (h *Handler) readPump(conn *websocket.Conn, clientIP string) {
-	defer conn.Close()
-
-	for {
-		_, message, err := conn.ReadMessage()
-		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				logger.Errorf("WebSocket error: %v", err)
-			}
-			break
-		}
-
-		var req CommandRequest
-		if err := json.Unmarshal(message, &req); err != nil {
-			logger.Errorf("Failed to parse command request: %v", err)
-			continue
-		}
-
-		switch req.Type {
-		case "get_commands":
-			h.handleGetCommands(conn)
-		case "get_agent_commands":
-			h.handleGetAgentCommands(conn, req)
-		case "get_config":
-			h.handleGetConfig(conn)
-		case "get_agent_stats":
-			h.handleGetAgentStats(conn)
-		case "execute_command":
-			go h.handleCommand(conn, req, clientIP)
-		case "stop_command":
-			h.handleStopCommand(req, clientIP)
-		default:
-			logger.Warnf("Unknown message type: %s", req.Type)
-		}
-	}
-}
-
-// handleCommand handles a command request
-func (h *Handler) handleCommand(conn *websocket.Conn, req CommandRequest, clientIP string) {
-	resp := h.createCommandResponse(req, false)
-
-	// Get session ID for rate limiting
-	h.clientsLock.RLock()
-	sessionID := h.clientSessions[conn]
-	h.clientsLock.RUnlock()
-
-	// Check rate limit
-	if !h.rateLimiter.checkRateLimit(sessionID) {
-		remaining := h.rateLimiter.getRemainingTime(sessionID)
-		resp.Success = false
-		resp.Error = fmt.Sprintf("Rate limit exceeded. Please wait %d seconds before trying again.", int(remaining.Seconds())+1)
-		h.sendStreamingResponseWithID(conn, resp, true, "")
-		logger.Warnf("Client [%s] rate limit exceeded for session: %s", clientIP, sessionID)
-		return
-	}
-
-	agents := h.agentManager.GetAgents()
-	var agentCommands []string
-	var requiresTarget bool = true
-
-	for _, a := range agents {
-		if a["name"] == req.Agent {
-			if status, ok := a["status"].(int); !ok || status != 1 {
-				resp.Success = false
-				resp.Error = "Agent is not connected"
-				h.sendStreamingResponseWithID(conn, resp, true, "")
-				return
-			}
-
-			if cmds, ok := a["commands"].([]string); ok {
-				agentCommands = cmds
-			}
-			break
-		}
-	}
-
-	// Validate input only if target is required
-	if requiresTarget {
-		inputType := validator.ValidateInput(req.Target)
-		if inputType == validator.InvalidInput {
-			resp.Success = false
-			resp.Error = "Invalid target: must be an IP address or domain name, and not exceed 256 characters"
-			h.sendStreamingResponseWithID(conn, resp, true, "")
-			return
-		}
-	}
-
-	cmd, ok := validator.SanitizeCommand(req.Command, req.Target, agentCommands)
-	if !ok {
-		resp.Success = false
-		resp.Error = "Invalid command"
-		h.sendStreamingResponseWithID(conn, resp, true, "")
-		return
-	}
-
-	// Generate commandID with sessionID included to ensure uniqueness across users
-	commandID := h.generateCommandID(req.Command, req.Target, req.Agent, sessionID)
-	stopChan := make(chan bool, 1)
-
-	// Store command-to-session mapping
-	h.clientsLock.Lock()
-	h.commandSessions[commandID] = sessionID
-	h.clientsLock.Unlock()
-
-	// Clean up mapping when command completes
-	defer func() {
-		h.clientsLock.Lock()
-		delete(h.commandSessions, commandID)
-		h.clientsLock.Unlock()
-	}()
-
-	// Log command execution with client IP and session
-	logger.Infof("Client [%s] sent run signal for command: %s", clientIP, commandID)
-
-	h.setActiveCommand(commandID, stopChan)
-
-	// Execute command with streaming output
-	err := h.agentManager.ExecuteCommandStreamingWithStopAndID(req.Agent, cmd, commandID, req.IPVersion, stopChan, func(output string, isError bool, isComplete bool, isStopped bool) {
-		// Get the correct connection for this command using commandID routing
-		targetConn := h.getConnectionForCommand(commandID, conn)
-
-		if isStopped {
-			// Send stopped message - use append mode to preserve last output
-			stoppedResp := h.createCommandResponse(req, true)
-			stoppedResp.Output = "\n*** Stopped ***"
-			stoppedResp.Error = ""
-			h.sendStreamingResponse(targetConn, stoppedResp, true, commandID, "append", true)
-		} else if isComplete {
-			// Send completion message
-			if isError {
-				resp.Success = false
-				resp.Error = output
-				resp.Output = ""
-			} else {
-				resp.Success = true
-				resp.Output = ""
-			}
-			h.sendStreamingResponseWithID(targetConn, resp, true, commandID)
-		} else {
-			// Send streaming output
-			streamResp := h.createCommandResponse(req, true)
-			streamResp.Output = output
-			if isError {
-				streamResp.Error = output
-				streamResp.Output = ""
-			}
-			h.sendStreamingResponseWithID(targetConn, streamResp, false, commandID)
-		}
-	})
-
-	h.removeActiveCommand(commandID)
-
-	if err != nil {
-		resp.Success = false
-		resp.Error = err.Error()
-		h.sendStreamingResponseWithID(conn, resp, true, commandID)
-		return
-	}
-}
-
-// handleGetCommands handles the get commands request
-func (h *Handler) handleGetCommands(conn *websocket.Conn) {
-	// Get all unique commands from all connected agents
-	commands := h.agentManager.GetAllAvailableCommands()
-	response := CommandsListResponse{
-		Type:     "commands_list",
-		Commands: commands,
-	}
-
-	h.sendJSONResponse(conn, response, "commands response")
-}
-
-// handleGetAgentCommands handles the get agent commands request
-func (h *Handler) handleGetAgentCommands(conn *websocket.Conn, req CommandRequest) {
-	if req.Agent == "" {
-		logger.Warnf("Agent name is required for get_agent_commands request")
-		return
-	}
-
-	// Get agent's available commands directly from the agent manager
-	commands := h.agentManager.GetAgentCommands(req.Agent)
-	response := CommandsListResponse{
-		Type:     "commands_list",
-		Commands: commands,
-	}
-
-	h.sendJSONResponse(conn, response, "agent commands response")
-}
-
-// handleGetAgentStats handles the get_agent_stats request
-func (h *Handler) handleGetAgentStats(conn *websocket.Conn) {
-	stats := h.agentManager.GetAgentStats()
-
-	response := map[string]any{
-		"type":  "agent_stats",
-		"stats": stats,
-	}
-
-	h.sendJSONResponse(conn, response, "agent stats")
-}
-
-// handleGetConfig handles the get_config request
-func (h *Handler) handleGetConfig(conn *websocket.Conn) {
-	cfg := config.GetConfig()
-	if cfg == nil {
-		logger.Errorf("Configuration not available")
-		return
-	}
-
-	// Get agent statistics
-	stats := h.agentManager.GetAgentStats()
-
-	response := AppVersion{
-		Type:    "app_config",
-		Version: utils.GetAppVersion(),
-	}
-
-	// Add agent statistics to response
-	if response.Config == nil {
-		response.Config = make(map[string]string)
-	}
-	response.Config["agents_total"] = fmt.Sprintf("%d", stats["total"])
-	response.Config["agents_online"] = fmt.Sprintf("%d", stats["online"])
-	response.Config["agents_offline"] = fmt.Sprintf("%d", stats["offline"])
-
-	if err := conn.WriteJSON(response); err != nil {
-		logger.Errorf("Failed to send app config: %v", err)
-	}
-}
-
-// sendJSONResponse sends a JSON response to the client
-func (h *Handler) sendJSONResponse(conn *websocket.Conn, response interface{}, responseType string) {
-	data, err := json.Marshal(response)
-	if err != nil {
-		logger.Errorf("Failed to marshal %s: %v", responseType, err)
-		return
-	}
-
-	h.clientsLock.RLock()
-	defer h.clientsLock.RUnlock()
-
-	if _, ok := h.clients[conn]; ok {
-		conn.WriteMessage(websocket.TextMessage, data)
-	}
-}
-
-// getConnectionForCommand returns the WebSocket connection for a given command ID
-// If commandID is not found or session is disconnected, returns the original conn
-func (h *Handler) getConnectionForCommand(commandID string, fallbackConn *websocket.Conn) *websocket.Conn {
-	h.clientsLock.RLock()
-	defer h.clientsLock.RUnlock()
-
-	// Find session ID for this command
-	sessionID, exists := h.commandSessions[commandID]
-	if !exists {
-		// Command not found in mapping, use fallback
-		return fallbackConn
-	}
-
-	// Find connection for this session
-	conn, exists := h.sessionConns[sessionID]
-	if !exists || conn == nil {
-		// Session disconnected, use fallback
-		return fallbackConn
-	}
-
-	// Verify connection is still active
-	if _, active := h.clients[conn]; !active {
-		// Connection no longer active, use fallback
-		return fallbackConn
-	}
-
-	return conn
-}
-
-// sendStreamingResponse sends a streaming response to the client with all options
-func (h *Handler) sendStreamingResponse(conn *websocket.Conn, resp CommandResponse, isComplete bool, commandID string, outputMode string, stopped bool) {
-	streamResp := map[string]any{
-		"type":        "command_output",
-		"success":     resp.Success,
-		"agent":       resp.Agent,
-		"command":     resp.Command,
-		"target":      resp.Target,
-		"output":      resp.Output,
-		"error":       resp.Error,
-		"is_complete": isComplete,
-		"command_id":  commandID,
-		"output_mode": outputMode,
-		"stopped":     stopped,
-	}
-
-	data, err := json.Marshal(streamResp)
-	if err != nil {
-		logger.Errorf("Failed to marshal streaming response: %v", err)
-		return
-	}
-
-	h.clientsLock.RLock()
-	defer h.clientsLock.RUnlock()
-
-	if _, ok := h.clients[conn]; ok {
-		conn.WriteMessage(websocket.TextMessage, data)
-	}
-}
-
-// sendStreamingResponseWithID sends a streaming response with command ID (default: replace mode, not stopped)
-func (h *Handler) sendStreamingResponseWithID(conn *websocket.Conn, resp CommandResponse, isComplete bool, commandID string) {
-	h.sendStreamingResponse(conn, resp, isComplete, commandID, "replace", false)
-}
-
-// sendAgentStatus sends the agent status to a client
-func (h *Handler) sendAgentStatus(conn *websocket.Conn) {
-	groups := h.agentManager.GetAgentGroups()
-	update := map[string]any{
-		"type":   "agent_status",
-		"groups": groups,
-	}
-
-	// Send directly without client lock check (for initial connection)
-	data, err := json.Marshal(update)
-	if err != nil {
-		logger.Errorf("Failed to marshal agent status: %v", err)
-		return
-	}
-
-	conn.WriteMessage(websocket.TextMessage, data)
-}
-
-// handleStopCommand handles a stop command request
-func (h *Handler) handleStopCommand(req CommandRequest, clientIP string) {
-	if req.CommandID == "" {
-		logger.Warnf("Stop command request missing command_id")
-		return
-	}
-
-	if h.stopActiveCommand(req.CommandID) {
-		logger.Infof("Client [%s] sent stop signal for command: %s", clientIP, req.CommandID)
-	}
-}
-
-// BroadcastAgentStatus broadcasts agent status to all clients
-func (h *Handler) BroadcastAgentStatus() {
-	groups := h.agentManager.GetAgentGroups()
-	update := AgentStatusUpdate{
-		Type:   "agent_status",
-		Groups: groups,
-	}
-
-	h.broadcastToAllClients(update, "agent status")
-}
-
-// broadcastToAllClients broadcasts a message to all connected clients
-func (h *Handler) broadcastToAllClients(message interface{}, messageType string) {
-	data, err := json.Marshal(message)
-	if err != nil {
-		logger.Errorf("Failed to marshal %s: %v", messageType, err)
-		return
-	}
-
-	h.clientsLock.RLock()
-	defer h.clientsLock.RUnlock()
-
-	for conn := range h.clients {
-		conn.WriteMessage(websocket.TextMessage, data)
-	}
-}
-
 // generateCommandID generates a unique command ID
 func (h *Handler) generateCommandID(command, target, agent, sessionID string) string {
 	return fmt.Sprintf("%s-%s-%s-%s", command, target, agent, sessionID)
-}
-
-// createCommandResponse creates a base command response
-func (h *Handler) createCommandResponse(req CommandRequest, success bool) CommandResponse {
-	return CommandResponse{
-		Success: success,
-		Agent:   req.Agent,
-		Command: req.Command,
-		Target:  req.Target,
-	}
 }
 
 // setActiveCommand safely sets an active command
@@ -780,7 +337,6 @@ func (rl *RateLimiter) getRemainingTime(sessionID string) time.Duration {
 
 // SessionResponse represents the response for session creation
 type SessionResponse struct {
-	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
 }
 
@@ -797,7 +353,6 @@ func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
 
 	// Create response
 	response := SessionResponse{
-		Type:      "session_id",
 		SessionID: sessionID,
 	}
 
@@ -832,4 +387,320 @@ func (h *Handler) generateSessionID() string {
 	timestamp := time.Now().UnixMilli()
 	randomStr := GenerateRandomString(10)
 	return fmt.Sprintf("session_%d_%s", timestamp, randomStr)
+}
+
+// validateSessionID validates if a session ID is valid
+func (h *Handler) validateSessionID(sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	// Basic validation: check format
+	if !strings.HasPrefix(sessionID, "session_") {
+		return false
+	}
+	return true
+}
+
+// NodeInfo represents node information response
+type NodeInfo struct {
+	Name     string   `json:"name"`
+	Group    string   `json:"group"`
+	Status   int      `json:"status"`
+	Details  string   `json:"details"`
+	Commands []string `json:"commands"`
+}
+
+// NodesResponse represents the response for /api/node
+type NodesResponse struct {
+	Version      string           `json:"version"`
+	TotalNodes   int              `json:"total_nodes"`
+	OnlineNodes  int              `json:"online_nodes"`
+	OfflineNodes int              `json:"offline_nodes"`
+	Groups       []map[string]any `json:"groups"`
+}
+
+// handleGetNodes handles GET /api/node - returns node list and status
+func (h *Handler) handleGetNodes(w http.ResponseWriter, r *http.Request) {
+	// Only allow GET requests
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Validate session ID
+	sessionID := r.URL.Query().Get("session_id")
+	if !h.validateSessionID(sessionID) {
+		http.Error(w, "Invalid or missing session_id", http.StatusUnauthorized)
+		return
+	}
+
+	// Get agent statistics
+	stats := h.agentManager.GetAgentStats()
+	groups := h.agentManager.GetAgentGroups()
+
+	response := NodesResponse{
+		Version:      utils.GetAppVersion(),
+		TotalNodes:   stats["total"].(int),
+		OnlineNodes:  stats["online"].(int),
+		OfflineNodes: stats["offline"].(int),
+		Groups:       groups,
+	}
+
+	// Set headers to prevent CDN caching
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		logger.Errorf("Failed to encode nodes response: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+}
+
+// ExecRequest represents command execution request
+type ExecRequest struct {
+	Agent     string `json:"agent"`
+	Command   string `json:"command"`
+	Target    string `json:"target"`
+	IPVersion string `json:"ip_version"`
+}
+
+// handleExecCommand handles POST /api/exec - executes command and streams output via SSE
+func (h *Handler) handleExecCommand(w http.ResponseWriter, r *http.Request) {
+	// Only allow POST requests
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Validate session ID from query parameter
+	sessionID := r.URL.Query().Get("session_id")
+	if !h.validateSessionID(sessionID) {
+		http.Error(w, "Invalid or missing session_id", http.StatusUnauthorized)
+		return
+	}
+
+	// Parse request body
+	var req ExecRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	clientIP := h.getRealIP(r)
+
+	// Set SSE headers to prevent CDN caching
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	// Check rate limit
+	if !h.rateLimiter.checkRateLimit(sessionID) {
+		remaining := h.rateLimiter.getRemainingTime(sessionID)
+		errorMsg := fmt.Sprintf("Rate limit exceeded. Please wait %d seconds before trying again.", int(remaining.Seconds())+1)
+		h.sendSSEError(w, flusher, errorMsg)
+		logger.Warnf("Client [%s] rate limit exceeded for session: %s", clientIP, sessionID)
+		return
+	}
+
+	// Validate agent and command
+	agents := h.agentManager.GetAgents()
+	var agentCommands []string
+	var requiresTarget bool = true
+	var agentFound bool = false
+	var agentOnline bool = false
+
+	// Check if agent exists and is online
+	for _, a := range agents {
+		if a["name"] == req.Agent {
+			agentFound = true
+			// Check if agent is online
+			if statusVal, ok := a["status"].(int); ok && statusVal == 1 {
+				agentOnline = true
+			}
+			break
+		}
+	}
+
+	if !agentFound {
+		h.sendSSEError(w, flusher, "Agent not found")
+		return
+	}
+
+	if !agentOnline {
+		h.sendSSEError(w, flusher, "Agent is not connected")
+		return
+	}
+
+	// Get commands from agent manager
+	cmdDetails := h.agentManager.GetAgentCommands(req.Agent)
+	for _, cmd := range cmdDetails {
+		agentCommands = append(agentCommands, cmd.Name)
+	}
+
+	if len(agentCommands) == 0 {
+		h.sendSSEError(w, flusher, "No commands available for agent")
+		return
+	}
+
+	// Validate input only if target is required
+	if requiresTarget {
+		inputType := validator.ValidateInput(req.Target)
+		if inputType == validator.InvalidInput {
+			h.sendSSEError(w, flusher, "Invalid target: must be an IP address or domain name, and not exceed 256 characters")
+			return
+		}
+	}
+
+	cmd, ok := validator.SanitizeCommand(req.Command, req.Target, agentCommands)
+	if !ok {
+		h.sendSSEError(w, flusher, "Invalid command")
+		return
+	}
+
+	// Generate commandID
+	commandID := h.generateCommandID(req.Command, req.Target, req.Agent, sessionID)
+	stopChan := make(chan bool, 1)
+
+	logger.Infof("Client [%s] executing command: %s", clientIP, commandID)
+
+	h.setActiveCommand(commandID, stopChan)
+	defer h.removeActiveCommand(commandID)
+
+	// Execute command with streaming output via SSE
+	err := h.agentManager.ExecuteCommandStreamingWithStopAndID(req.Agent, cmd, commandID, req.IPVersion, stopChan, func(output string, isError bool, isComplete bool, isStopped bool) {
+		if isStopped {
+			h.sendSSEMessage(w, flusher, map[string]any{
+				"type":    "output",
+				"output":  "\n*** Stopped ***",
+				"stopped": true,
+			})
+			h.sendSSEMessage(w, flusher, map[string]any{
+				"type":    "complete",
+				"success": false,
+				"stopped": true,
+			})
+		} else if isComplete {
+			if isError {
+				h.sendSSEMessage(w, flusher, map[string]any{
+					"type":    "complete",
+					"success": false,
+					"error":   output,
+				})
+			} else {
+				// Send final output before completion message
+				if output != "" {
+					h.sendSSEMessage(w, flusher, map[string]any{
+						"type":   "output",
+						"output": output,
+					})
+				}
+				h.sendSSEMessage(w, flusher, map[string]any{
+					"type":    "complete",
+					"success": true,
+				})
+			}
+		} else {
+			if isError {
+				h.sendSSEMessage(w, flusher, map[string]any{
+					"type":  "error",
+					"error": output,
+				})
+			} else {
+				h.sendSSEMessage(w, flusher, map[string]any{
+					"type":   "output",
+					"output": output,
+				})
+			}
+		}
+	})
+
+	if err != nil {
+		h.sendSSEError(w, flusher, err.Error())
+		return
+	}
+}
+
+// sendSSEMessage sends an SSE message
+func (h *Handler) sendSSEMessage(w http.ResponseWriter, flusher http.Flusher, data map[string]any) {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		logger.Errorf("Failed to marshal SSE message: %v", err)
+		return
+	}
+	fmt.Fprintf(w, "data: %s\n\n", jsonData)
+	flusher.Flush()
+}
+
+// sendSSEError sends an SSE error message and completes the stream
+func (h *Handler) sendSSEError(w http.ResponseWriter, flusher http.Flusher, errorMsg string) {
+	h.sendSSEMessage(w, flusher, map[string]any{
+		"type":    "complete",
+		"success": false,
+		"error":   errorMsg,
+	})
+}
+
+// StopRequest represents command stop request
+type StopRequest struct {
+	CommandID string `json:"command_id"`
+}
+
+// handleStopCommand handles POST /api/stop - stops a running command
+func (h *Handler) handleStopCommand(w http.ResponseWriter, r *http.Request) {
+	// Only allow POST requests
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Validate session ID from query parameter
+	sessionID := r.URL.Query().Get("session_id")
+	if !h.validateSessionID(sessionID) {
+		http.Error(w, "Invalid or missing session_id", http.StatusUnauthorized)
+		return
+	}
+
+	// Parse request body
+	var req StopRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.CommandID == "" {
+		http.Error(w, "Missing command_id", http.StatusBadRequest)
+		return
+	}
+
+	clientIP := h.getRealIP(r)
+
+	// Stop the command
+	if h.stopActiveCommand(req.CommandID) {
+		logger.Infof("Client [%s] sent stop signal for command: %s", clientIP, req.CommandID)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"message": "Command stopped",
+		})
+	} else {
+		logger.Warnf("Client [%s] attempted to stop non-existent command: %s", clientIP, req.CommandID)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]any{
+			"success": false,
+			"error":   "Command not found or already completed",
+		})
+	}
 }

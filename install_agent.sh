@@ -112,11 +112,12 @@ agent:
 commands:
   ping:
     template: "ping -c 4"
-    description: "Network connectivity test"
 
   mtr:
     template: "mtr -rw -c 4"
-    description: "Network route and packet loss analysis"
+
+  traceroute:
+    template: "traceroute -Aq 1"
 EOF
 
 # systemd
