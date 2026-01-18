@@ -71,7 +71,6 @@ func NewDNSResolver() *DNSResolver {
 		},
 		currentIndex: 0,
 		stopChan:     make(chan struct{}),
-		testInterval: 5 * time.Minute, // Test every 5 minutes
 	}
 }
 
