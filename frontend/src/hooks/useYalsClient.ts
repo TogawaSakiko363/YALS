@@ -51,6 +51,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
   const [activeCommands, setActiveCommands] = useState<Set<string>>(new Set());
   const [streamingOutputs, setStreamingOutputs] = useState<Map<string, string>>(new Map());
   const [abortControllers, setAbortControllers] = useState<Map<string, AbortController>>(new Map()); // Map command ID to AbortController
+  const [sessionId, setSessionId] = useState<string | null>(null); // Store sessionID in React state
 
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -78,10 +79,10 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
   }, [maxReconnectAttempts, reconnectDelay]);
 
   // Fetch nodes data from /api/node
-  const fetchNodesData = useCallback(async (sessionId: string) => {
+  const fetchNodesData = useCallback(async (sessionIdParam: string) => {
     try {
       const protocol = window.location.protocol;
-      const response = await fetch(`${protocol}//${serverUrl}/api/node?session_id=${sessionId}`, {
+      const response = await fetch(`${protocol}//${serverUrl}/api/node?session_id=${sessionIdParam}`, {
         method: 'GET',
         headers: {
           'Accept': 'application/json',
@@ -149,10 +150,14 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       try {
         const protocol = window.location.protocol;
         
-        // Fetch session ID from server API
-        let sessionId = sessionStorage.getItem('yals_session_id');
+        // Check if sessionID already exists in state or sessionStorage
+        let currentSessionId = sessionId;
         
-        if (!sessionId) {
+        if (!currentSessionId) {
+          currentSessionId = sessionStorage.getItem('yals_session_id') || null;
+        }
+        
+        if (!currentSessionId) {
           const response = await fetch(`${protocol}//${serverUrl}/api/session`, {
             method: 'GET',
             headers: {
@@ -165,19 +170,23 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
           }
 
           const sessionData = await response.json();
-          sessionId = sessionData.session_id;
+          currentSessionId = sessionData.session_id;
           
-          if (!sessionId) {
+          if (!currentSessionId) {
             throw new Error('Server did not return a valid session ID');
           }
 
-          // Store session ID in sessionStorage
-          sessionStorage.setItem('yals_session_id', sessionId);
-          console.log('YALS: Received session ID from server:', sessionId);
+          // Store session ID in both sessionStorage and React state
+          sessionStorage.setItem('yals_session_id', currentSessionId);
+          setSessionId(currentSessionId);
+          console.log('YALS: Received session ID from server:', currentSessionId);
+        } else {
+          // Update React state with existing sessionID
+          setSessionId(currentSessionId);
         }
         
         // Fetch nodes data once on connect
-        await fetchNodesData(sessionId);
+        await fetchNodesData(currentSessionId);
         
         setIsConnected(true);
         setIsConnecting(false);
@@ -197,7 +206,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
         reject(error);
       }
     });
-  }, [serverUrl, fetchNodesData, handleReconnect]);
+  }, [serverUrl, fetchNodesData, handleReconnect, sessionId]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -219,9 +228,34 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       throw new Error('No node selected');
     }
 
-    const sessionId = sessionStorage.getItem('yals_session_id');
-    if (!sessionId) {
-      throw new Error('No session ID available');
+    // Get sessionID with retry logic for high-latency environments
+    let currentSessionId = sessionId;
+    let retries = 0;
+    const maxRetries = 5;
+    const retryDelay = 100; // ms
+
+    while (!currentSessionId && retries < maxRetries) {
+      // Try React state first
+      if (sessionId) {
+        currentSessionId = sessionId;
+        break;
+      }
+      
+      // Try sessionStorage
+      const stored = sessionStorage.getItem('yals_session_id');
+      if (stored) {
+        currentSessionId = stored;
+        setSessionId(stored);
+        break;
+      }
+
+      // Wait before retry
+      await new Promise(resolve => setTimeout(resolve, retryDelay));
+      retries++;
+    }
+
+    if (!currentSessionId) {
+      throw new Error('No session ID available, please refresh the page.');
     }
 
     // Check if command requires target
@@ -234,7 +268,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
 
     const trimmedTarget = requiresTarget ? target.trim() : '';
     // Generate commandID with sessionID to match backend format
-    const simpleCommandId = `${command}-${trimmedTarget}-${selectedAgent}-${sessionId}`;
+    const simpleCommandId = `${command}-${trimmedTarget}-${selectedAgent}-${currentSessionId}`;
 
     // Add to active commands
     setActiveCommands(prev => new Set(prev).add(simpleCommandId));
@@ -252,7 +286,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     setCommandHistory(prev => [historyEntry, ...prev.filter(h => h.id !== simpleCommandId)]);
 
     const protocol = window.location.protocol;
-    const execUrl = `${protocol}//${serverUrl}/api/exec?session_id=${sessionId}`;
+    const execUrl = `${protocol}//${serverUrl}/api/exec?session_id=${currentSessionId}`;
 
     return new Promise((resolve, reject) => {
       let accumulatedOutput = '';
@@ -428,7 +462,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
         }
       });
     });
-  }, [isConnected, selectedAgent, commands, serverUrl, setLocalStorage]);
+  }, [isConnected, selectedAgent, commands, serverUrl, setLocalStorage, sessionId]);
 
   const clearHistory = useCallback(() => {
     setCommandHistory([]);
@@ -448,8 +482,30 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
   }, []);
 
   const stopCommand = useCallback(async (commandId: string) => {
-    const sessionId = sessionStorage.getItem('yals_session_id');
-    if (!sessionId) {
+    // Get sessionID with retry logic
+    let currentSessionId = sessionId;
+    let retries = 0;
+    const maxRetries = 5;
+    const retryDelay = 100; // ms
+
+    while (!currentSessionId && retries < maxRetries) {
+      if (sessionId) {
+        currentSessionId = sessionId;
+        break;
+      }
+      
+      const stored = sessionStorage.getItem('yals_session_id');
+      if (stored) {
+        currentSessionId = stored;
+        setSessionId(stored);
+        break;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, retryDelay));
+      retries++;
+    }
+
+    if (!currentSessionId) {
       console.error('No session ID available');
       return;
     }
@@ -465,7 +521,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
 
     // Then send stop request to backend
     const protocol = window.location.protocol;
-    const stopUrl = `${protocol}//${serverUrl}/api/stop?session_id=${sessionId}`;
+    const stopUrl = `${protocol}//${serverUrl}/api/stop?session_id=${currentSessionId}`;
 
     try {
       const response = await fetch(stopUrl, {
@@ -531,7 +587,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
         return newMap;
       });
     }, 100);
-  }, [abortControllers, streamingOutputs, serverUrl, setLocalStorage]);
+  }, [abortControllers, streamingOutputs, serverUrl, setLocalStorage, sessionId]);
 
   useEffect(() => {
     try {

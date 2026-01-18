@@ -48,7 +48,6 @@ var (
 func GetResolver() *DNSResolver {
 	resolverOnce.Do(func() {
 		globalResolver = NewDNSResolver()
-		globalResolver.StartLatencyMonitoring()
 	})
 	return globalResolver
 }
@@ -58,15 +57,15 @@ func NewDNSResolver() *DNSResolver {
 	return &DNSResolver{
 		servers: []*DNSServer{
 			{
-				Name:    "Alibaba",
-				Type:    "doh",
-				Address: "https://223.5.5.5/resolve",
-				Port:    443,
-			},
-			{
 				Name:    "Google",
 				Type:    "doh",
 				Address: "https://8.8.8.8/resolve",
+				Port:    443,
+			},
+			{
+				Name:    "Alibaba",
+				Type:    "doh",
+				Address: "https://223.5.5.5/resolve",
 				Port:    443,
 			},
 		},
@@ -74,84 +73,6 @@ func NewDNSResolver() *DNSResolver {
 		stopChan:     make(chan struct{}),
 		testInterval: 5 * time.Minute, // Test every 5 minutes
 	}
-}
-
-// StartLatencyMonitoring starts periodic latency testing
-func (r *DNSResolver) StartLatencyMonitoring() {
-	// Initial test
-	go r.testAllServers()
-
-	// Periodic testing
-	go func() {
-		ticker := time.NewTicker(r.testInterval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ticker.C:
-				r.testAllServers()
-			case <-r.stopChan:
-				return
-			}
-		}
-	}()
-}
-
-// Stop stops the latency monitoring
-func (r *DNSResolver) Stop() {
-	close(r.stopChan)
-}
-
-// testAllServers tests latency for all DNS servers
-func (r *DNSResolver) testAllServers() {
-	var wg sync.WaitGroup
-	testDomain := "www.bing.com"
-
-	for _, server := range r.servers {
-		wg.Add(1)
-		go func(srv *DNSServer) {
-			defer wg.Done()
-
-			start := time.Now()
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-
-			_, err := r.resolveWithServerAndVersion(ctx, testDomain, srv, IPVersionAuto)
-			elapsed := time.Since(start)
-
-			r.mutex.Lock()
-			if err == nil {
-				srv.Latency = elapsed
-			} else {
-				srv.Latency = 10 * time.Second // Set high latency on failure
-			}
-			srv.LastTest = time.Now()
-			r.mutex.Unlock()
-		}(server)
-	}
-
-	wg.Wait()
-
-	// Select the fastest server
-	r.selectFastestServer()
-}
-
-// selectFastestServer selects the server with lowest latency
-func (r *DNSResolver) selectFastestServer() {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
-	fastestIndex := 0
-	minLatency := r.servers[0].Latency
-
-	for i, server := range r.servers {
-		if server.Latency < minLatency {
-			minLatency = server.Latency
-			fastestIndex = i
-		}
-	}
-
-	r.currentIndex = fastestIndex
 }
 
 // Resolve resolves a domain name to IP addresses using the fastest server
@@ -354,21 +275,4 @@ func (r *DNSResolver) queryDoH(ctx context.Context, client *http.Client, serverA
 	}
 
 	return ips, nil
-}
-
-// GetCurrentServer returns information about the currently selected server
-func (r *DNSResolver) GetCurrentServer() *DNSServer {
-	r.mutex.RLock()
-	defer r.mutex.RUnlock()
-	return r.servers[r.currentIndex]
-}
-
-// GetAllServers returns information about all servers
-func (r *DNSResolver) GetAllServers() []*DNSServer {
-	r.mutex.RLock()
-	defer r.mutex.RUnlock()
-
-	servers := make([]*DNSServer, len(r.servers))
-	copy(servers, r.servers)
-	return servers
 }

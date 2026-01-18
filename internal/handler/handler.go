@@ -368,6 +368,17 @@ func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// setNoCacheHeaders sets headers to prevent CDN caching for API responses
+func (h *Handler) setNoCacheHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
+}
+
 // GenerateRandomString generates a random alphanumeric string of specified length
 func GenerateRandomString(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -448,9 +459,7 @@ func (h *Handler) handleGetNodes(w http.ResponseWriter, r *http.Request) {
 
 	// Set headers to prevent CDN caching
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	w.Header().Set("Pragma", "no-cache")
-	w.Header().Set("Expires", "0")
+	h.setNoCacheHeaders(w)
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		logger.Errorf("Failed to encode nodes response: %v", err)
@@ -491,13 +500,9 @@ func (h *Handler) handleExecCommand(w http.ResponseWriter, r *http.Request) {
 
 	clientIP := h.getRealIP(r)
 
-	// Set SSE headers to prevent CDN caching
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-	w.Header().Set("Pragma", "no-cache")
-	w.Header().Set("Expires", "0")
+	// Set headers to prevent CDN caching
+	w.Header().Set("Content-Type", "application/json")
+	h.setNoCacheHeaders(w)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
