@@ -57,15 +57,9 @@ func NewDNSResolver() *DNSResolver {
 	return &DNSResolver{
 		servers: []*DNSServer{
 			{
-				Name:    "Google",
+				Name:    "AUdev",
 				Type:    "doh",
-				Address: "https://8.8.8.8/resolve",
-				Port:    443,
-			},
-			{
-				Name:    "Alibaba",
-				Type:    "doh",
-				Address: "https://223.5.5.5/resolve",
+				Address: "https://dns.audev.tech/resolve",
 				Port:    443,
 			},
 		},
