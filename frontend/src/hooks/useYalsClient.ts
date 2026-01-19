@@ -229,19 +229,13 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     }
 
     // Get sessionID with retry logic for high-latency environments
-    let currentSessionId = sessionId;
+    let currentSessionId = sessionId || sessionStorage.getItem('yals_session_id');
     let retries = 0;
     const maxRetries = 5;
     const retryDelay = 100; // ms
 
     while (!currentSessionId && retries < maxRetries) {
-      // Try React state first
-      if (sessionId) {
-        currentSessionId = sessionId;
-        break;
-      }
-      
-      // Try sessionStorage
+      // Try sessionStorage again
       const stored = sessionStorage.getItem('yals_session_id');
       if (stored) {
         currentSessionId = stored;
@@ -256,6 +250,11 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
 
     if (!currentSessionId) {
       throw new Error('No session ID available, please refresh the page.');
+    }
+
+    // Ensure sessionId state is synced
+    if (!sessionId) {
+      setSessionId(currentSessionId);
     }
 
     // Check if command requires target
@@ -483,17 +482,12 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
 
   const stopCommand = useCallback(async (commandId: string) => {
     // Get sessionID with retry logic
-    let currentSessionId = sessionId;
+    let currentSessionId = sessionId || sessionStorage.getItem('yals_session_id');
     let retries = 0;
     const maxRetries = 5;
     const retryDelay = 100; // ms
 
     while (!currentSessionId && retries < maxRetries) {
-      if (sessionId) {
-        currentSessionId = sessionId;
-        break;
-      }
-      
       const stored = sessionStorage.getItem('yals_session_id');
       if (stored) {
         currentSessionId = stored;
@@ -517,28 +511,6 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     const abortController = abortControllers.get(commandId);
     if (abortController) {
       abortController.abort();
-    }
-
-    // Then send stop request to backend
-    const protocol = window.location.protocol;
-    const stopUrl = `${protocol}//${serverUrl}/api/stop?session_id=${currentSessionId}`;
-
-    try {
-      const response = await fetch(stopUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          command_id: commandId
-        })
-      });
-
-      if (!response.ok) {
-        console.error('Failed to stop command:', response.status);
-      } 
-    } catch (error) {
-      console.error('Error stopping command:', error);
     }
 
     // Clean up local state FIRST (to update button state immediately)
@@ -578,15 +550,34 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       return prev;
     });
 
-    // Clean up streaming outputs LAST (after history is updated)
-    // Don't clean immediately to allow App.tsx to read it
-    setTimeout(() => {
-      setStreamingOutputs(prev => {
-        const newMap = new Map(prev);
-        newMap.delete(commandId);
-        return newMap;
+    // Clean up streaming outputs immediately
+    setStreamingOutputs(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(commandId);
+      return newMap;
+    });
+
+    // Then send stop request to backend
+    const protocol = window.location.protocol;
+    const stopUrl = `${protocol}//${serverUrl}/api/stop?session_id=${currentSessionId}`;
+
+    try {
+      const response = await fetch(stopUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          command_id: commandId
+        })
       });
-    }, 100);
+
+      if (!response.ok) {
+        console.error('Failed to stop command:', response.status);
+      } 
+    } catch (error) {
+      console.error('Error stopping command:', error);
+    }
   }, [abortControllers, streamingOutputs, serverUrl, setLocalStorage, sessionId]);
 
   useEffect(() => {
