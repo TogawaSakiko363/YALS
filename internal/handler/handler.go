@@ -225,11 +225,6 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleAgentWebSocket is deprecated (replaced by gRPC)
-func (h *Handler) handleAgentWebSocket(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "WebSocket endpoint deprecated, use gRPC", http.StatusGone)
-}
-
 // getRealIP gets the real client IP address
 func (h *Handler) getRealIP(r *http.Request) string {
 	ip := r.Header.Get("X-Real-IP")
@@ -246,10 +241,6 @@ func (h *Handler) getRealIP(r *http.Request) string {
 	}
 
 	return r.RemoteAddr
-}
-
-// pingAgent is deprecated (gRPC handles keepalive)
-func (h *Handler) pingAgent(conn interface{}) {
 }
 
 // generateCommandID generates a unique command ID
