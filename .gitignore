@@ -1,0 +1,4 @@
+*.md
+bin/
+web/
+.vscode/

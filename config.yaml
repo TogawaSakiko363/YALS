@@ -1,0 +1,27 @@
+# YALS Server Configuration
+
+# Server settings
+server:
+  host: "0.0.0.0"
+  port: 8080  # Unified port for both gRPC (agent connections) and HTTP (web interface)
+  password: "your_password"
+  log_level: "info"  # debug, info, warn, error
+  tls_cert_file: "./cert.pem"  # Path to TLS certificate file (auto-generated if missing)
+  tls_key_file: "./key.pem"    # Path to TLS private key file (auto-generated if missing)
+
+# WebSocket settings
+websocket:
+  ping_interval: 30  # seconds
+  pong_wait: 60      # seconds
+
+# Connection settings
+connection:
+  keepalive: 86400  # seconds (24 hours), set to 0 to never delete
+
+# Rate limiting settings
+rate_limit:
+  enabled: true      # Enable/disable rate limiting
+  max_commands: 10    # Maximum number of commands allowed
+  time_window: 60    # Time window in seconds
+
+
