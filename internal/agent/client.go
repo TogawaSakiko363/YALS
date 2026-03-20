@@ -81,16 +81,25 @@ func NewClientWithConfig(agentConfig *config.AgentConfig) *Client {
 
 // ConnectToServer connects to the server and handles the gRPC connection
 func (c *Client) ConnectToServer() error {
-	// Build server address
-	serverAddr := fmt.Sprintf("%s:%d", c.config.Server.Host, c.config.Server.Port)
-
 	// Set up gRPC dial options with TLS
 	var opts []grpc.DialOption
 
+	// Build server address
+	serverAddr := fmt.Sprintf("%s:%d", c.config.Server.Host, c.config.Server.Port)
+
+	// Extract hostname from server address for TLS ServerName
+	// This ensures proper TLS handshake when using CDN or reverse proxy
+	hostname := c.config.Server.Host
+	// Remove port if present for ServerName
+	if idx := strings.LastIndex(hostname, ":"); idx != -1 {
+		hostname = hostname[:idx]
+	}
+
 	// Use TLS with insecure skip verify (for self-signed certificates)
+	// ServerName is set to the actual hostname to match CDN/proxy certificate
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: true,
-		ServerName:         "YALS_INSECURE",
+		ServerName:         hostname,
 	}
 	creds := credentials.NewTLS(tlsConfig)
 	opts = append(opts, grpc.WithTransportCredentials(creds))
