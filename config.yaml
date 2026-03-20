@@ -9,8 +9,8 @@ server:
   tls_cert_file: "./cert.pem"  # Path to TLS certificate file (auto-generated if missing)
   tls_key_file: "./key.pem"    # Path to TLS private key file (auto-generated if missing)
 
-# WebSocket settings
-websocket:
+# gRPC settings
+grpc:
   ping_interval: 30  # seconds
   pong_wait: 60      # seconds
 

@@ -88,8 +88,8 @@ func main() {
 	}
 
 	// Create HTTP handler
-	pingInterval := time.Duration(cfg.WebSocket.PingInterval) * time.Second
-	pongWait := time.Duration(cfg.WebSocket.PongWait) * time.Second
+	pingInterval := time.Duration(cfg.GRPC.PingInterval) * time.Second
+	pongWait := time.Duration(cfg.GRPC.PongWait) * time.Second
 	h := handler.NewHandler(agentManager, pingInterval, pongWait)
 
 	// Generate or validate TLS certificates
@@ -112,8 +112,8 @@ func main() {
 	// Configure gRPC server with keepalive
 	grpcServer := grpc.NewServer(
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:    time.Duration(cfg.WebSocket.PingInterval) * time.Second,
-			Timeout: time.Duration(cfg.WebSocket.PongWait) * time.Second,
+			Time:    time.Duration(cfg.GRPC.PingInterval) * time.Second,
+			Timeout: time.Duration(cfg.GRPC.PongWait) * time.Second,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             5 * time.Second,

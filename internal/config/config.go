@@ -21,10 +21,10 @@ type Config struct {
 		TLSKeyFile  string `yaml:"tls_key_file"`
 	} `yaml:"server"`
 
-	WebSocket struct {
+	GRPC struct {
 		PingInterval int `yaml:"ping_interval"`
 		PongWait     int `yaml:"pong_wait"`
-	} `yaml:"websocket"`
+	} `yaml:"grpc"`
 
 	Connection struct {
 		KeepAlive int `yaml:"keepalive"`
