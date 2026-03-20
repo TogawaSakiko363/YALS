@@ -45,7 +45,7 @@ type CommandOutput struct {
 	IsComplete bool
 }
 
-// Manager manages multiple WebSocket agents
+// Manager manages multiple agents
 type Manager struct {
 	agents             map[string]*Agent
 	agentsLock         sync.RWMutex
