@@ -1,0 +1,60 @@
+package agent
+
+import (
+	"YALS/internal/config"
+	"YALS/internal/plugin"
+	"os/exec"
+	"sync"
+)
+
+// Shell operators that require bash execution
+var shellOperators = []string{"|", "&&", "||", ">", "<", ";"}
+
+// ActiveCommand represents an active command with its details
+type ActiveCommand struct {
+	Cmd         *exec.Cmd
+	FullCommand string
+}
+
+// Client represents an agent client that connects to the server
+type Client struct {
+	config         *config.AgentConfig
+	activeCommands map[string]*ActiveCommand
+	commandsLock   sync.RWMutex
+}
+
+// CommandRequest represents a command request from the server
+type CommandRequest struct {
+	Type        string `json:"type"`
+	CommandName string `json:"command_name"`
+	Target      string `json:"target"`
+	CommandID   string `json:"command_id"`
+	IPVersion   string `json:"ip_version,omitempty"`
+}
+
+// CommandResponse represents a command response to the server
+type CommandResponse struct {
+	Type       string `json:"type"`
+	CommandID  string `json:"command_id"`
+	Output     string `json:"output"`
+	Error      string `json:"error,omitempty"`
+	IsComplete bool   `json:"is_complete"`
+	IsError    bool   `json:"is_error"`
+}
+
+// NewClient creates a new agent client (deprecated, use NewClientWithConfig)
+func NewClient(password string) *Client {
+	agentConfig := &config.AgentConfig{}
+	agentConfig.Server.Password = password
+	return NewClientWithConfig(agentConfig)
+}
+
+// NewClientWithConfig creates a new agent client with configuration
+func NewClientWithConfig(agentConfig *config.AgentConfig) *Client {
+	plugin.GetManager().SetConfig(agentConfig)
+
+	return &Client{
+		config:         agentConfig,
+		activeCommands: make(map[string]*ActiveCommand),
+	}
+}

@@ -1,21 +1,19 @@
 package agent
 
 import (
-	"YALS/internal/config"
-	"YALS/internal/logger"
-	"YALS/internal/plugin"
-	"YALS/internal/proto"
-	"YALS/internal/validator"
 	"bufio"
-	"context"
-	"crypto/tls"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
+
+	"YALS/internal/config"
+	"YALS/internal/logger"
+	"YALS/internal/plugin"
+	"YALS/internal/proto"
+	"YALS/internal/validator"
 
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/charmap"
@@ -25,177 +23,7 @@ import (
 	"golang.org/x/text/encoding/traditionalchinese"
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/keepalive"
-	"google.golang.org/grpc/metadata"
 )
-
-// Shell operators that require bash execution
-var shellOperators = []string{"|", "&&", "||", ">", "<", ";"}
-
-// ActiveCommand represents an active command with its details
-type ActiveCommand struct {
-	Cmd         *exec.Cmd
-	FullCommand string
-}
-
-// Client represents an agent client that connects to the server
-type Client struct {
-	config         *config.AgentConfig
-	activeCommands map[string]*ActiveCommand
-	commandsLock   sync.RWMutex
-}
-
-// CommandRequest represents a command request from the server
-type CommandRequest struct {
-	Type        string `json:"type"`
-	CommandName string `json:"command_name"`
-	Target      string `json:"target"`
-	CommandID   string `json:"command_id"`
-	IPVersion   string `json:"ip_version,omitempty"` // "auto", "ipv4", or "ipv6"
-}
-
-// CommandResponse represents a command response to the server
-type CommandResponse struct {
-	Type       string `json:"type"`
-	CommandID  string `json:"command_id"`
-	Output     string `json:"output"`
-	Error      string `json:"error,omitempty"`
-	IsComplete bool   `json:"is_complete"`
-	IsError    bool   `json:"is_error"`
-}
-
-// NewClient creates a new agent client (deprecated, use NewClientWithConfig)
-func NewClient(password string) *Client {
-	agentConfig := &config.AgentConfig{}
-	agentConfig.Server.Password = password
-	return NewClientWithConfig(agentConfig)
-}
-
-// NewClientWithConfig creates a new agent client with configuration
-func NewClientWithConfig(agentConfig *config.AgentConfig) *Client {
-	// Set plugin manager configuration
-	plugin.GetManager().SetConfig(agentConfig)
-
-	return &Client{
-		config:         agentConfig,
-		activeCommands: make(map[string]*ActiveCommand),
-	}
-}
-
-// ConnectToServer connects to the server and handles the gRPC connection
-func (c *Client) ConnectToServer() error {
-	// Set up gRPC dial options with TLS
-	var opts []grpc.DialOption
-
-	// Build server address
-	serverAddr := fmt.Sprintf("%s:%d", c.config.Server.Host, c.config.Server.Port)
-
-	// Extract hostname from server address for TLS ServerName
-	// This ensures proper TLS handshake when using CDN or reverse proxy
-	hostname := c.config.Server.Host
-	// Remove port if present for ServerName
-	if idx := strings.LastIndex(hostname, ":"); idx != -1 {
-		hostname = hostname[:idx]
-	}
-
-	// Use TLS with insecure skip verify (for self-signed certificates)
-	// ServerName is set to the actual hostname to match CDN/proxy certificate
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true,
-		ServerName:         hostname,
-	}
-	creds := credentials.NewTLS(tlsConfig)
-	opts = append(opts, grpc.WithTransportCredentials(creds))
-
-	// Use JSON codec
-	opts = append(opts, grpc.WithDefaultCallOptions(grpc.CallContentSubtype("json")))
-
-	// Add keepalive options
-	opts = append(opts, grpc.WithKeepaliveParams(keepalive.ClientParameters{
-		Time:                10 * time.Second,
-		Timeout:             3 * time.Second,
-		PermitWithoutStream: true,
-	}))
-
-	logger.Infof("Connecting to server at %s", serverAddr)
-
-	// Connect to server
-	conn, err := grpc.Dial(serverAddr, opts...)
-	if err != nil {
-		return fmt.Errorf("failed to connect to server: %w", err)
-	}
-	defer conn.Close()
-
-	logger.Infof("Connected to server successfully")
-
-	// Create client
-	client := proto.NewAgentServiceClient(conn)
-
-	// Create context with token metadata
-	ctx := metadata.AppendToOutgoingContext(context.Background(), "token", c.config.Server.Password)
-
-	// Send handshake
-	handshakeReq := &proto.HandshakeRequest{
-		Name:  c.config.Agent.Name,
-		Group: c.config.Agent.Group,
-		Details: proto.AgentDetails{
-			Location:    c.config.Agent.Details.Location,
-			Datacenter:  c.config.Agent.Details.Datacenter,
-			TestIP:      c.config.Agent.Details.TestIP,
-			Description: c.config.Agent.Details.Description,
-		},
-		Commands: c.convertCommandsToProto(),
-	}
-
-	handshakeResp, err := client.Handshake(ctx, handshakeReq)
-	if err != nil {
-		return fmt.Errorf("failed to send handshake: %w", err)
-	}
-
-	if !handshakeResp.Success {
-		return fmt.Errorf("handshake failed: %s", handshakeResp.Message)
-	}
-
-	logger.Infof("Handshake completed successfully")
-
-	// Add agent info to metadata for stream
-	streamCtx := metadata.AppendToOutgoingContext(ctx,
-		"agent-name", c.config.Agent.Name,
-		"agent-group", c.config.Agent.Group)
-
-	// Start bidirectional streaming
-	stream, err := client.StreamCommands(streamCtx)
-	if err != nil {
-		return fmt.Errorf("failed to create stream: %w", err)
-	}
-
-	// Handle incoming messages
-	for {
-		msg, err := stream.Recv()
-		if err != nil {
-			if err == io.EOF {
-				logger.Info("Stream closed by server")
-			} else {
-				logger.Errorf("Stream error: %v", err)
-			}
-			break
-		}
-
-		switch msg.Type {
-		case "execute_command":
-			go c.executeCommandGRPC(stream, msg)
-		case "stop_command":
-			c.stopCommand(msg.CommandID)
-		default:
-			logger.Warnf("Unknown message type: %s", msg.Type)
-		}
-	}
-
-	logger.Infof("Disconnected from server")
-	return nil
-}
 
 // convertCommandsToProto converts config commands to proto format
 func (c *Client) convertCommandsToProto() []proto.CommandInfo {
@@ -212,7 +40,6 @@ func (c *Client) convertCommandsToProto() []proto.CommandInfo {
 
 // executeCommandGRPC executes a command and streams the output via gRPC
 func (c *Client) executeCommandGRPC(stream proto.AgentService_StreamCommandsClient, msg *proto.CommandMessage) {
-	// Convert proto message to CommandRequest
 	req := CommandRequest{
 		Type:        msg.Type,
 		CommandName: msg.CommandName,
@@ -221,7 +48,6 @@ func (c *Client) executeCommandGRPC(stream proto.AgentService_StreamCommandsClie
 		IPVersion:   msg.IPVersion,
 	}
 
-	// Validate and prepare command
 	fullCommand, cmd, err := c.prepareCommand(req)
 	if err != nil {
 		c.sendErrorGRPC(stream, req.CommandID, err.Error())
@@ -230,17 +56,14 @@ func (c *Client) executeCommandGRPC(stream proto.AgentService_StreamCommandsClie
 
 	logger.Infof("Executing command: %s", req.CommandID)
 
-	// Check if this is a plugin command
 	if strings.HasPrefix(fullCommand, "plugin:") {
 		c.executePluginCommandGRPC(stream, req, fullCommand)
 		return
 	}
 
-	// Store and manage active command
 	c.storeActiveCommand(req.CommandID, cmd, fullCommand)
 	defer c.removeActiveCommand(req.CommandID)
 
-	// Execute command with streaming output
 	if err := c.runCommandWithStreamingGRPC(stream, req.CommandID, cmd); err != nil {
 		c.sendErrorGRPC(stream, req.CommandID, err.Error())
 		return
@@ -251,42 +74,35 @@ func (c *Client) executeCommandGRPC(stream proto.AgentService_StreamCommandsClie
 
 // prepareCommand validates and prepares a command for execution
 func (c *Client) prepareCommand(req CommandRequest) (string, *exec.Cmd, error) {
-	// Security check: Verify command is allowed
 	if !c.config.IsCommandAllowed(req.CommandName) {
 		logger.Warnf("SECURITY: Blocked unauthorized command '%s' from server", req.CommandName)
 		return "", nil, fmt.Errorf("command '%s' is not allowed", req.CommandName)
 	}
 
-	// Get command configuration
 	cmdConfig, exists := c.config.GetCommandConfig(req.CommandName)
 	if !exists {
 		return "", nil, fmt.Errorf("command configuration not found: %s", req.CommandName)
 	}
 
-	// Resolve domain name if target is a domain (for both plugin and traditional commands)
 	resolvedTarget := req.Target
 	if req.Target != "" && !cmdConfig.IgnoreTarget {
 		resolvedTarget = c.resolveTargetIfNeeded(req.Target, req.IPVersion)
 	}
 
-	// Check if command uses a plugin
 	if cmdConfig.UsePlugin != "" {
 		return c.preparePluginCommand(cmdConfig, resolvedTarget)
 	}
 
-	// Get command template for traditional commands
 	template := cmdConfig.Template
 	if template == "" {
 		return "", nil, fmt.Errorf("command template not found: %s", req.CommandName)
 	}
 
-	// Build full command with target parameter (only if not ignored)
 	fullCommand := template
 	if resolvedTarget != "" && !cmdConfig.IgnoreTarget {
 		fullCommand = template + " " + resolvedTarget
 	}
 
-	// Create command based on complexity
 	cmd := c.createCommand(fullCommand)
 	if cmd == nil {
 		return "", nil, fmt.Errorf("empty command")
@@ -297,11 +113,9 @@ func (c *Client) prepareCommand(req CommandRequest) (string, *exec.Cmd, error) {
 
 // resolveTargetIfNeeded resolves domain name to IP if target is a domain
 func (c *Client) resolveTargetIfNeeded(target, ipVersion string) string {
-	// Extract host from target (may include port)
 	host := target
 	port := ""
 
-	// Handle host:port format
 	if strings.Contains(target, ":") {
 		parts := strings.Split(target, ":")
 		if len(parts) == 2 {
@@ -310,10 +124,8 @@ func (c *Client) resolveTargetIfNeeded(target, ipVersion string) string {
 		}
 	}
 
-	// Check if host is a domain name
 	inputType := validator.ValidateInput(host)
 	if inputType == validator.Domain {
-		// Convert string to IPVersion type
 		var dnsIPVersion validator.IPVersion
 		switch ipVersion {
 		case "ipv4":
@@ -324,7 +136,6 @@ func (c *Client) resolveTargetIfNeeded(target, ipVersion string) string {
 			dnsIPVersion = validator.IPVersionAuto
 		}
 
-		// Resolve domain to IP with version preference
 		ips, err := validator.ResolveDomainWithVersion(host, dnsIPVersion)
 		if err != nil {
 			logger.Warnf("Failed to resolve domain %s with IP version %s: %v, using original target", host, ipVersion, err)
@@ -334,21 +145,16 @@ func (c *Client) resolveTargetIfNeeded(target, ipVersion string) string {
 		if len(ips) > 0 {
 			resolvedIP := ips[0].String()
 
-			// Check if it's IPv6 and format accordingly
 			parsedIP := ips[0]
 			isIPv6 := parsedIP.To4() == nil
 
-			// Reconstruct target with resolved IP
 			if port != "" {
 				if isIPv6 {
-					// IPv6 with port needs brackets: [ipv6]:port
 					return "[" + resolvedIP + "]:" + port
 				}
-				// IPv4 with port: ipv4:port
 				return resolvedIP + ":" + port
 			}
 
-			// No port specified - return IP as-is (no brackets)
 			return resolvedIP
 		}
 	}
@@ -358,7 +164,6 @@ func (c *Client) resolveTargetIfNeeded(target, ipVersion string) string {
 
 // preparePluginCommand prepares a plugin-based command for execution
 func (c *Client) preparePluginCommand(cmdConfig config.CommandTemplate, resolvedTarget string) (string, *exec.Cmd, error) {
-	// Use resolved target (already converted from domain to IP if needed)
 	fullCommand := fmt.Sprintf("plugin:%s %s", cmdConfig.UsePlugin, resolvedTarget)
 	cmd := exec.Command("echo", "plugin_placeholder")
 	return fullCommand, cmd, nil
@@ -366,14 +171,12 @@ func (c *Client) preparePluginCommand(cmdConfig config.CommandTemplate, resolved
 
 // createCommand creates an exec.Cmd based on command complexity
 func (c *Client) createCommand(fullCommand string) *exec.Cmd {
-	// Check if command contains shell operators
 	for _, op := range shellOperators {
 		if strings.Contains(fullCommand, op) {
 			return exec.Command("/bin/bash", "-c", fullCommand)
 		}
 	}
 
-	// Simple command - parse normally
 	parts := strings.Fields(fullCommand)
 	if len(parts) == 0 {
 		return nil
@@ -400,7 +203,6 @@ func (c *Client) removeActiveCommand(commandID string) {
 
 // runCommandWithStreamingGRPC executes a command and streams its output via gRPC
 func (c *Client) runCommandWithStreamingGRPC(stream proto.AgentService_StreamCommandsClient, commandID string, cmd *exec.Cmd) error {
-	// Set up pipes
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("failed to get stdout pipe: %w", err)
@@ -410,12 +212,10 @@ func (c *Client) runCommandWithStreamingGRPC(stream proto.AgentService_StreamCom
 		return fmt.Errorf("failed to get stderr pipe: %w", err)
 	}
 
-	// Start command
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start command: %w", err)
 	}
 
-	// Accumulate output with immediate updates
 	var stdoutLines []string
 	var stderrLines []string
 	var stdoutMutex, stderrMutex sync.Mutex
@@ -424,11 +224,9 @@ func (c *Client) runCommandWithStreamingGRPC(stream proto.AgentService_StreamCom
 	outputDone := make(chan bool, 2)
 	outputUpdate := make(chan bool, 100)
 
-	// Read stdout and stderr concurrently with accumulation
 	go c.accumulateOutputWithNotify(stdout, &stdoutLines, &stdoutMutex, outputDone, outputUpdate)
 	go c.accumulateOutputWithNotify(stderr, &stderrLines, &stderrMutex, outputDone, outputUpdate)
 
-	// Send immediate updates when output changes
 	go func() {
 		for range outputUpdate {
 			stdoutMutex.Lock()
@@ -448,7 +246,6 @@ func (c *Client) runCommandWithStreamingGRPC(stream proto.AgentService_StreamCom
 		}
 	}()
 
-	// Wait for command completion
 	go func() {
 		err := cmd.Wait()
 		done <- err
@@ -457,13 +254,11 @@ func (c *Client) runCommandWithStreamingGRPC(stream proto.AgentService_StreamCom
 		stderr.Close()
 	}()
 
-	// Wait for completion and output processing
 	cmdErr := <-done
 	<-outputDone
 	<-outputDone
 	close(outputUpdate)
 
-	// Send final output
 	stdoutMutex.Lock()
 	stderrMutex.Lock()
 	var allLines []string
@@ -494,23 +289,19 @@ func (c *Client) accumulateOutputWithNotify(pipe interface{ Read([]byte) (int, e
 	scanner := bufio.NewScanner(pipe)
 	for scanner.Scan() {
 		line := scanner.Text()
-		// Convert GBK to UTF-8 on Windows to fix encoding issues
 		line = convertToUTF8(line)
 		mutex.Lock()
 		*lines = append(*lines, line)
 		mutex.Unlock()
 
-		// Notify immediately when new output is available
 		select {
 		case notify <- true:
 		default:
-			// Channel full, skip notification (update will happen soon anyway)
 		}
 	}
 
 	if err := scanner.Err(); err != nil && !isClosedPipeError(err) {
 		errorLine := fmt.Sprintf("Error reading output: %v", err)
-		// Convert error message as well
 		errorLine = convertToUTF8(errorLine)
 		mutex.Lock()
 		*lines = append(*lines, errorLine)
@@ -552,19 +343,16 @@ func (c *Client) stopCommand(commandID string) {
 
 	logger.Infof("Stopping command: %s", commandID)
 
-	// Determine timeout based on command complexity
 	timeout := 1 * time.Second
 	if c.isComplexCommand(activeCmd.FullCommand) {
 		timeout = 500 * time.Millisecond
 	}
 
-	// Try graceful termination first
 	if err := activeCmd.Cmd.Process.Signal(os.Interrupt); err != nil {
 		activeCmd.Cmd.Process.Kill()
 		return
 	}
 
-	// Force kill after timeout
 	go func() {
 		time.Sleep(timeout)
 		activeCmd.Cmd.Process.Kill()
@@ -615,31 +403,23 @@ func isClosedPipeError(err error) bool {
 }
 
 // convertToUTF8 converts the input string from any encoding to UTF-8
-// It automatically detects and handles various encodings including GBK, Big5, Shift-JIS, EUC-KR, etc.
 func convertToUTF8(input string) string {
 	if input == "" {
 		return input
 	}
 
-	// Try UTF-8 first (most common case)
 	if isUTF8([]byte(input)) {
 		return input
 	}
 
-	// List of encodings to try (common ones)
 	encodings := []encoding.Encoding{
-		// Chinese encodings
 		simplifiedchinese.GBK,
 		traditionalchinese.Big5,
-		// Japanese encodings
 		japanese.ShiftJIS,
 		japanese.EUCJP,
-		// Korean encodings
 		korean.EUCKR,
-		// Western European encodings
 		charmap.Windows1252,
 		charmap.ISO8859_1,
-		// Unicode BOM variants
 		unicode.UTF16(unicode.LittleEndian, unicode.UseBOM),
 		unicode.UTF16(unicode.BigEndian, unicode.UseBOM),
 	}
@@ -652,7 +432,6 @@ func convertToUTF8(input string) string {
 		}
 	}
 
-	// If all conversions fail, return original string
 	logger.Debugf("Failed to convert encoding, using original string")
 	return input
 }
