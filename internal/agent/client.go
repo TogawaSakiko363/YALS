@@ -13,12 +13,17 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/encoding/japanese"
+	"golang.org/x/text/encoding/korean"
 	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/encoding/traditionalchinese"
+	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -609,21 +614,92 @@ func isClosedPipeError(err error) bool {
 		err == os.ErrClosed
 }
 
-// convertToUTF8 converts the input string from GBK to UTF-8 if running on Windows
+// convertToUTF8 converts the input string from any encoding to UTF-8
+// It automatically detects and handles various encodings including GBK, Big5, Shift-JIS, EUC-KR, etc.
 func convertToUTF8(input string) string {
-	if runtime.GOOS != "windows" {
+	if input == "" {
 		return input
 	}
 
-	// Try to convert from GBK to UTF-8
-	decoder := simplifiedchinese.GBK.NewDecoder()
-	reader := transform.NewReader(strings.NewReader(input), decoder)
-	output, err := io.ReadAll(reader)
-	if err != nil {
-		// If conversion fails, return original string
+	// Try UTF-8 first (most common case)
+	if isUTF8([]byte(input)) {
 		return input
 	}
-	return string(output)
+
+	// List of encodings to try (common ones)
+	encodings := []encoding.Encoding{
+		// Chinese encodings
+		simplifiedchinese.GBK,
+		traditionalchinese.Big5,
+		// Japanese encodings
+		japanese.ShiftJIS,
+		japanese.EUCJP,
+		// Korean encodings
+		korean.EUCKR,
+		// Western European encodings
+		charmap.Windows1252,
+		charmap.ISO8859_1,
+		// Unicode BOM variants
+		unicode.UTF16(unicode.LittleEndian, unicode.UseBOM),
+		unicode.UTF16(unicode.BigEndian, unicode.UseBOM),
+	}
+
+	for _, enc := range encodings {
+		decoder := enc.NewDecoder()
+		output, _, err := transform.String(decoder, input)
+		if err == nil && isUTF8([]byte(output)) {
+			return output
+		}
+	}
+
+	// If all conversions fail, return original string
+	logger.Debugf("Failed to convert encoding, using original string")
+	return input
+}
+
+// isUTF8 checks if the given bytes are valid UTF-8
+func isUTF8(data []byte) bool {
+	for i := 0; i < len(data); {
+		if data[i] < 0x80 {
+			i++
+			continue
+		}
+		if data[i] < 0xC2 {
+			return false
+		}
+		if data[i] < 0xE0 {
+			if i+1 >= len(data) {
+				return false
+			}
+			if data[i+1] < 0x80 || data[i+1] >= 0xC0 {
+				return false
+			}
+			i += 2
+			continue
+		}
+		if data[i] < 0xF0 {
+			if i+2 >= len(data) {
+				return false
+			}
+			if data[i+1] < 0x80 || data[i+1] >= 0xC0 || data[i+2] < 0x80 || data[i+2] >= 0xC0 {
+				return false
+			}
+			i += 3
+			continue
+		}
+		if data[i] < 0xF8 {
+			if i+3 >= len(data) {
+				return false
+			}
+			if data[i+1] < 0x80 || data[i+1] >= 0xC0 || data[i+2] < 0x80 || data[i+2] >= 0xC0 || data[i+3] < 0x80 || data[i+3] >= 0xC0 {
+				return false
+			}
+			i += 4
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // executePluginCommandGRPC executes a plugin-based command via gRPC
