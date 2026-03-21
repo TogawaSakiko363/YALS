@@ -2,14 +2,12 @@ package agent
 
 import (
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"YALS/internal/config"
-	"YALS/internal/logger"
 	"YALS/internal/proto"
 	"YALS/internal/validator"
 )
@@ -25,6 +23,7 @@ const (
 
 // Agent represents a connected agent
 type Agent struct {
+	UUID              string
 	Name              string
 	Group             string
 	Details           config.AgentDetails
@@ -38,6 +37,15 @@ type Agent struct {
 	commandsLock      sync.RWMutex
 }
 
+// AgentRegistration contains server-side metadata used when attaching a live stream.
+type AgentRegistration struct {
+	UUID     string
+	Name     string
+	Group    string
+	Details  config.AgentDetails
+	Commands []config.CommandInfo
+}
+
 // CommandOutput represents command output from an agent
 type CommandOutput struct {
 	Output     string
@@ -48,6 +56,7 @@ type CommandOutput struct {
 // Manager manages multiple agents
 type Manager struct {
 	agents             map[string]*Agent
+	agentsByUUID       map[string]*Agent
 	agentsLock         sync.RWMutex
 	outputHandlers     map[string]chan CommandOutput
 	outputHandlersLock sync.RWMutex
@@ -57,6 +66,7 @@ type Manager struct {
 func NewManager() *Manager {
 	return &Manager{
 		agents:         make(map[string]*Agent),
+		agentsByUUID:   make(map[string]*Agent),
 		outputHandlers: make(map[string]chan CommandOutput),
 	}
 }
@@ -66,11 +76,6 @@ func (m *Manager) HandleAgentConnection(stream proto.AgentService_StreamCommands
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
-			if err == io.EOF {
-				logger.Info("Agent stream closed")
-			} else {
-				logger.Errorf("Agent stream error: %v", err)
-			}
 			return err
 		}
 
@@ -80,140 +85,87 @@ func (m *Manager) HandleAgentConnection(stream proto.AgentService_StreamCommands
 	}
 }
 
-// RegisterAgent registers a new agent from handshake
-func (m *Manager) RegisterAgent(name, group string, details proto.AgentDetails, commands []proto.CommandInfo, stream proto.AgentService_StreamCommandsServer) {
+// RegisterAgent registers or updates agent metadata from server persistence.
+func (m *Manager) RegisterAgent(reg AgentRegistration, stream proto.AgentService_StreamCommandsServer) {
 	m.agentsLock.Lock()
 	defer m.agentsLock.Unlock()
 
-	agentDetails := config.AgentDetails{
-		Location:    details.Location,
-		Datacenter:  details.Datacenter,
-		TestIP:      details.TestIP,
-		Description: details.Description,
-	}
-
-	configCommands := make([]config.CommandInfo, len(commands))
-	for i, cmd := range commands {
-		configCommands[i] = config.CommandInfo{
-			Name:         cmd.Name,
-			IgnoreTarget: cmd.IgnoreTarget,
-		}
-	}
-
-	agent, exists := m.agents[name]
+	agent, exists := m.agentsByUUID[reg.UUID]
 	if exists {
-		agent.Group = group
-		agent.Details = agentDetails
+		if agent.Name != reg.Name {
+			delete(m.agents, agent.Name)
+		}
+		agent.UUID = reg.UUID
+		agent.Name = reg.Name
+		agent.Group = reg.Group
+		agent.Details = reg.Details
 		agent.stream = stream
-		agent.status = StatusConnected
 		agent.lastCheck = time.Now()
-		agent.lastConnected = time.Now()
-		agent.availableCommands = configCommands
-	} else {
-		now := time.Now()
-		agent = &Agent{
-			Name:              name,
-			Group:             group,
-			Details:           agentDetails,
-			stream:            stream,
-			status:            StatusConnected,
-			lastCheck:         now,
-			lastConnected:     now,
-			firstSeen:         now,
-			availableCommands: configCommands,
+		agent.availableCommands = cloneCommands(reg.Commands)
+		if stream != nil {
+			agent.status = StatusConnected
+			agent.lastConnected = time.Now()
 		}
-		m.agents[name] = agent
-	}
-
-	logger.Infof("Agent registered: %s (Group: %s)", name, group)
-}
-
-// RegisterAgentStream registers an agent's stream connection
-func (m *Manager) RegisterAgentStream(name, group string, stream proto.AgentService_StreamCommandsServer) {
-	m.agentsLock.Lock()
-	defer m.agentsLock.Unlock()
-
-	agent, exists := m.agents[name]
-	if exists {
-		agent.stream = stream
-		agent.status = StatusConnected
-		agent.lastConnected = time.Now()
-		logger.Infof("Agent stream connected: %s", name)
-	} else {
-		logger.Warnf("Agent stream connected but agent not registered: %s", name)
-	}
-}
-
-// UnregisterAgentStream marks an agent as disconnected
-func (m *Manager) UnregisterAgentStream(name string) {
-	m.agentsLock.Lock()
-	defer m.agentsLock.Unlock()
-
-	agent, exists := m.agents[name]
-	if exists {
-		agent.statusLock.Lock()
-		agent.status = StatusDisconnected
-		agent.stream = nil
-		agent.statusLock.Unlock()
-		logger.Infof("Agent stream disconnected: %s", name)
-	}
-}
-
-// handleCommandOutputProto processes command output from an agent via proto
-func (m *Manager) handleCommandOutputProto(msg *proto.CommandMessage) {
-	commandID := msg.CommandID
-	if commandID == "" {
+		m.agents[agent.Name] = agent
 		return
 	}
 
-	output := msg.Output
-	errorMsg := msg.Error
-	isComplete := msg.IsComplete
-	isError := msg.IsError
-
-	if errorMsg != "" {
-		output = errorMsg
-		isError = true
+	now := time.Now()
+	agent = &Agent{
+		UUID:              reg.UUID,
+		Name:              reg.Name,
+		Group:             reg.Group,
+		Details:           reg.Details,
+		stream:            stream,
+		status:            StatusDisconnected,
+		lastCheck:         now,
+		lastConnected:     now,
+		firstSeen:         now,
+		availableCommands: cloneCommands(reg.Commands),
+	}
+	if stream != nil {
+		agent.status = StatusConnected
 	}
 
-	m.outputHandlersLock.RLock()
-	handler, exists := m.outputHandlers[commandID]
-	m.outputHandlersLock.RUnlock()
+	m.agents[agent.Name] = agent
+	m.agentsByUUID[agent.UUID] = agent
+}
 
-	if exists {
-		select {
-		case handler <- CommandOutput{
-			Output:     output,
-			IsError:    isError,
-			IsComplete: isComplete,
-		}:
-		default:
-			logger.Warnf("Output channel full for command %s, attempting to send with timeout", commandID)
-			select {
-			case handler <- CommandOutput{
-				Output:     output,
-				IsError:    isError,
-				IsComplete: isComplete,
-			}:
-			case <-time.After(5 * time.Second):
-				logger.Errorf("Failed to send output for command %s after timeout, output may be lost", commandID)
-			}
-		}
+// RegisterAgentStream attaches an active stream for the specified UUID.
+func (m *Manager) RegisterAgentStream(uuid string, stream proto.AgentService_StreamCommandsServer) (*Agent, error) {
+	m.agentsLock.Lock()
+	defer m.agentsLock.Unlock()
+
+	agent, exists := m.agentsByUUID[uuid]
+	if !exists {
+		return nil, fmt.Errorf("agent not registered: %s", uuid)
 	}
+
+	agent.stream = stream
+	agent.statusLock.Lock()
+	agent.status = StatusConnected
+	agent.lastConnected = time.Now()
+	agent.lastCheck = time.Now()
+	agent.statusLock.Unlock()
+	m.agents[agent.Name] = agent
+
+	return agent, nil
 }
 
-// registerOutputHandler registers a handler for command output
-func (m *Manager) registerOutputHandler(commandID string, handler chan CommandOutput) {
-	m.outputHandlersLock.Lock()
-	m.outputHandlers[commandID] = handler
-	m.outputHandlersLock.Unlock()
-}
+// UnregisterAgentStream marks an agent as disconnected.
+func (m *Manager) UnregisterAgentStream(uuid string) {
+	m.agentsLock.Lock()
+	defer m.agentsLock.Unlock()
 
-// unregisterOutputHandler removes a handler for command output
-func (m *Manager) unregisterOutputHandler(commandID string) {
-	m.outputHandlersLock.Lock()
-	delete(m.outputHandlers, commandID)
-	m.outputHandlersLock.Unlock()
+	agent, exists := m.agentsByUUID[uuid]
+	if !exists {
+		return
+	}
+
+	agent.statusLock.Lock()
+	agent.status = StatusDisconnected
+	agent.stream = nil
+	agent.statusLock.Unlock()
 }
 
 // Status returns the current status of the agent
@@ -223,7 +175,111 @@ func (a *Agent) Status() Status {
 	return a.status
 }
 
-// buildAgentInfo creates a standardized agent info map
+// GetAgents returns a list of all agents with their status and details.
+func (m *Manager) GetAgents() []map[string]any {
+	names, agents := m.getSortedAgents()
+	result := make([]map[string]any, len(names))
+	for i := range names {
+		result[i] = agents[i]
+	}
+	return result
+}
+
+// GetAgentGroups returns all agents organized by groups.
+func (m *Manager) GetAgentGroups() []map[string]any {
+	names, agents := m.getSortedAgents()
+	groups := make(map[string][]map[string]any)
+	for i := range names {
+		agentInfo := agents[i]
+		groupName, _ := agentInfo["details"].(map[string]any)["group"].(string)
+		if groupName == "" {
+			groupName = "Default"
+		}
+		groups[groupName] = append(groups[groupName], agentInfo)
+	}
+
+	groupNames := make([]string, 0, len(groups))
+	for groupName := range groups {
+		groupNames = append(groupNames, groupName)
+	}
+	sort.Strings(groupNames)
+
+	result := make([]map[string]any, 0, len(groupNames))
+	for _, groupName := range groupNames {
+		result = append(result, map[string]any{
+			"name":   groupName,
+			"agents": groups[groupName],
+		})
+	}
+	return result
+}
+
+// GetAgentCommands returns the available commands for a specific agent.
+func (m *Manager) GetAgentCommands(agentName string) []validator.CommandDetail {
+	m.agentsLock.RLock()
+	agent, exists := m.agents[agentName]
+	m.agentsLock.RUnlock()
+	if !exists {
+		return []validator.CommandDetail{}
+	}
+
+	agent.commandsLock.RLock()
+	defer agent.commandsLock.RUnlock()
+
+	commands := make([]validator.CommandDetail, len(agent.availableCommands))
+	for i, cmd := range agent.availableCommands {
+		commands[i] = validator.CommandDetail{
+			Name:         cmd.Name,
+			IgnoreTarget: cmd.IgnoreTarget,
+		}
+	}
+	return commands
+}
+
+// GetAgentStats returns statistics about agents.
+func (m *Manager) GetAgentStats() map[string]any {
+	m.agentsLock.RLock()
+	defer m.agentsLock.RUnlock()
+
+	online := 0
+	offline := 0
+	for _, agent := range m.agents {
+		if agent.Status() == StatusConnected {
+			online++
+		} else {
+			offline++
+		}
+	}
+
+	return map[string]any{
+		"total":   len(m.agents),
+		"online":  online,
+		"offline": offline,
+	}
+}
+
+// CleanupOfflineAgents removes agents that have been offline for more than the specified duration.
+func (m *Manager) CleanupOfflineAgents(maxOfflineDuration time.Duration) int {
+	m.agentsLock.Lock()
+	defer m.agentsLock.Unlock()
+
+	cleaned := 0
+	now := time.Now()
+	for name, agent := range m.agents {
+		if agent.Status() == StatusDisconnected && now.Sub(agent.lastConnected) > maxOfflineDuration {
+			delete(m.agentsByUUID, agent.UUID)
+			delete(m.agents, name)
+			cleaned++
+		}
+	}
+	return cleaned
+}
+
+// GetCommandConfigInternal returns the command configuration for a specific agent and command.
+func (m *Manager) GetCommandConfigInternal(agentName, commandName string) (config.CommandInfo, bool) {
+	return m.getCommandConfig(agentName, commandName)
+}
+
 func (m *Manager) buildAgentInfo(name string, agent *Agent) map[string]any {
 	frontendStatus := 0
 	if agent.Status() == StatusConnected {
@@ -235,12 +291,17 @@ func (m *Manager) buildAgentInfo(name string, agent *Agent) map[string]any {
 	for i, cmd := range agent.availableCommands {
 		commands[i] = map[string]any{
 			"name":          cmd.Name,
+			"template":      cmd.Template,
+			"use_plugin":    cmd.UsePlugin,
+			"description":   cmd.Description,
 			"ignore_target": cmd.IgnoreTarget,
+			"maxmium_queue": cmd.MaximumQueue,
 		}
 	}
 	agent.commandsLock.RUnlock()
 
 	return map[string]any{
+		"uuid":     agent.UUID,
 		"name":     name,
 		"status":   frontendStatus,
 		"commands": commands,
@@ -259,7 +320,6 @@ func (m *Manager) buildAgentInfo(name string, agent *Agent) map[string]any {
 	}
 }
 
-// calculateOfflineDuration calculates how long an agent has been offline
 func (m *Manager) calculateOfflineDuration(agent *Agent) string {
 	if agent.Status() == StatusConnected {
 		return ""
@@ -278,19 +338,6 @@ func (m *Manager) calculateOfflineDuration(agent *Agent) string {
 	}
 }
 
-// GetAgents returns a list of all agents with their status and details
-func (m *Manager) GetAgents() []map[string]any {
-	names, agents := m.getSortedAgents()
-
-	result := make([]map[string]any, len(names))
-	for i := range names {
-		result[i] = agents[i]
-	}
-
-	return result
-}
-
-// getSortedAgents returns sorted agent names and their corresponding info maps
 func (m *Manager) getSortedAgents() ([]string, []map[string]any) {
 	m.agentsLock.RLock()
 	defer m.agentsLock.RUnlock()
@@ -311,179 +358,75 @@ func (m *Manager) getSortedAgents() ([]string, []map[string]any) {
 	return names, agents
 }
 
-// GetAgentGroups returns all agents organized by groups
-func (m *Manager) GetAgentGroups() []map[string]any {
-	names, agents := m.getSortedAgents()
-
-	groupCount := make(map[string]int, len(names))
-	for i := range names {
-		agentInfo := agents[i]
-		groupName, ok := agentInfo["details"].(map[string]any)["group"]
-		if !ok {
-			groupName = "Default"
-		}
-		groupNameStr, _ := groupName.(string)
-		if groupNameStr == "" {
-			groupNameStr = "Default"
-		}
-		groupCount[groupNameStr] = groupCount[groupNameStr] + 1
+func (m *Manager) handleCommandOutputProto(msg *proto.CommandMessage) {
+	commandID := msg.CommandID
+	if commandID == "" {
+		return
 	}
 
-	groups := make(map[string][]map[string]any, len(groupCount))
-	for i := range names {
-		agentInfo := agents[i]
-		groupName, ok := agentInfo["details"].(map[string]any)["group"]
-		if !ok {
-			groupName = "Default"
-		}
-
-		groupNameStr, _ := groupName.(string)
-		if groupNameStr == "" {
-			groupNameStr = "Default"
-		}
-
-		if groups[groupNameStr] == nil {
-			groups[groupNameStr] = make([]map[string]any, 0, groupCount[groupNameStr])
-		}
-		groups[groupNameStr] = append(groups[groupNameStr], agentInfo)
+	output := msg.Output
+	errorMsg := msg.Error
+	isComplete := msg.IsComplete
+	isError := msg.IsError
+	if errorMsg != "" {
+		output = errorMsg
+		isError = true
 	}
 
-	groupNames := make([]string, 0, len(groups))
-	for groupName := range groups {
-		groupNames = append(groupNames, groupName)
-	}
-	sort.Strings(groupNames)
-
-	result := make([]map[string]any, len(groupNames))
-	for i, groupName := range groupNames {
-		result[i] = map[string]any{
-			"name":   groupName,
-			"agents": groups[groupName],
-		}
+	m.outputHandlersLock.RLock()
+	handler, exists := m.outputHandlers[commandID]
+	m.outputHandlersLock.RUnlock()
+	if !exists {
+		return
 	}
 
-	return result
+	select {
+	case handler <- CommandOutput{Output: output, IsError: isError, IsComplete: isComplete}:
+	case <-time.After(5 * time.Second):
+	}
 }
 
-// GetAgentCommands returns the available commands for a specific agent
-func (m *Manager) GetAgentCommands(agentName string) []validator.CommandDetail {
+// registerOutputHandler registers a handler for command output
+func (m *Manager) registerOutputHandler(commandID string, handler chan CommandOutput) {
+	m.outputHandlersLock.Lock()
+	m.outputHandlers[commandID] = handler
+	m.outputHandlersLock.Unlock()
+}
+
+// unregisterOutputHandler removes a handler for command output
+func (m *Manager) unregisterOutputHandler(commandID string) {
+	m.outputHandlersLock.Lock()
+	delete(m.outputHandlers, commandID)
+	m.outputHandlersLock.Unlock()
+}
+
+func (m *Manager) getCommandConfig(agentName, commandName string) (config.CommandInfo, bool) {
 	m.agentsLock.RLock()
 	agent, exists := m.agents[agentName]
 	m.agentsLock.RUnlock()
-
 	if !exists {
-		return []validator.CommandDetail{}
+		return config.CommandInfo{}, false
 	}
 
 	agent.commandsLock.RLock()
 	defer agent.commandsLock.RUnlock()
-
-	commands := make([]validator.CommandDetail, len(agent.availableCommands))
-	for i, cmd := range agent.availableCommands {
-		commands[i] = validator.CommandDetail{
-			Name:         cmd.Name,
-			IgnoreTarget: cmd.IgnoreTarget,
+	for _, cmd := range agent.availableCommands {
+		if cmd.Name == commandName {
+			return cmd, true
 		}
 	}
-
-	return commands
+	return config.CommandInfo{}, false
 }
 
-// GetAllAvailableCommands returns all unique commands from all connected agents
-func (m *Manager) GetAllAvailableCommands() []validator.CommandDetail {
-	commandMap := m.getAllConnectedAgentCommands()
-
-	commands := make([]validator.CommandDetail, len(commandMap))
-	i := 0
-	for _, cmd := range commandMap {
-		commands[i] = cmd
-		i++
-	}
-
-	return commands
-}
-
-// getAllConnectedAgentCommands returns command map for all connected agents
-func (m *Manager) getAllConnectedAgentCommands() map[string]validator.CommandDetail {
+func (m *Manager) getAgent(name string) *Agent {
 	m.agentsLock.RLock()
 	defer m.agentsLock.RUnlock()
-
-	commandMap := make(map[string]validator.CommandDetail)
-
-	for _, agent := range m.agents {
-		if agent.Status() == StatusConnected {
-			agent.commandsLock.RLock()
-			for _, cmd := range agent.availableCommands {
-				commandMap[cmd.Name] = validator.CommandDetail{
-					Name:         cmd.Name,
-					IgnoreTarget: cmd.IgnoreTarget,
-				}
-			}
-			agent.commandsLock.RUnlock()
-		}
-	}
-
-	return commandMap
+	return m.agents[name]
 }
 
-// CleanupOfflineAgents removes agents that have been offline for more than the specified duration
-func (m *Manager) CleanupOfflineAgents(maxOfflineDuration time.Duration) int {
-	m.agentsLock.Lock()
-	defer m.agentsLock.Unlock()
-
-	estimatedCount := len(m.agents) / 3
-	toDelete := make([]string, 0, estimatedCount)
-	actualCount := 0
-	now := time.Now()
-
-	for name, agent := range m.agents {
-		if agent.Status() == StatusDisconnected && now.Sub(agent.lastConnected) > maxOfflineDuration {
-			if actualCount >= cap(toDelete) {
-				newSlice := make([]string, len(toDelete), cap(toDelete)*2)
-				copy(newSlice, toDelete)
-				toDelete = newSlice
-			}
-			toDelete = append(toDelete, name)
-			actualCount++
-		}
-	}
-
-	for _, name := range toDelete {
-		delete(m.agents, name)
-		logger.Infof("Cleaned up offline agent: %s", name)
-	}
-
-	return actualCount
-}
-
-// GetAgentStats returns statistics about agents
-func (m *Manager) GetAgentStats() map[string]any {
-	m.agentsLock.RLock()
-	defer m.agentsLock.RUnlock()
-
-	online := 0
-	offline := 0
-	total := len(m.agents)
-
-	for _, agent := range m.agents {
-		if agent.Status() == StatusConnected {
-			online++
-		} else {
-			offline++
-		}
-	}
-
-	return map[string]any{
-		"total":   total,
-		"online":  online,
-		"offline": offline,
-	}
-}
-
-// parseCommand parses a command string into command name and target
 func parseCommand(command string) (string, string, error) {
 	parts := strings.SplitN(strings.TrimSpace(command), " ", 2)
-	if len(parts) == 0 {
+	if len(parts) == 0 || parts[0] == "" {
 		return "", "", fmt.Errorf("empty command")
 	}
 
@@ -492,40 +435,11 @@ func parseCommand(command string) (string, string, error) {
 	if len(parts) > 1 {
 		target = parts[1]
 	}
-
 	return commandName, target, nil
 }
 
-// getCommandConfig returns the command configuration for a specific agent and command
-func (m *Manager) getCommandConfig(agentName, commandName string) (config.CommandInfo, bool) {
-	m.agentsLock.RLock()
-	agent, exists := m.agents[agentName]
-	m.agentsLock.RUnlock()
-
-	if !exists {
-		return config.CommandInfo{}, false
-	}
-
-	agent.commandsLock.RLock()
-	defer agent.commandsLock.RUnlock()
-
-	for _, cmd := range agent.availableCommands {
-		if cmd.Name == commandName {
-			return cmd, true
-		}
-	}
-
-	return config.CommandInfo{}, false
-}
-
-// GetCommandConfigInternal returns the command configuration for a specific agent and command (public method for handler)
-func (m *Manager) GetCommandConfigInternal(agentName, commandName string) (config.CommandInfo, bool) {
-	return m.getCommandConfig(agentName, commandName)
-}
-
-// getAgent returns an agent by name
-func (m *Manager) getAgent(name string) *Agent {
-	m.agentsLock.RLock()
-	defer m.agentsLock.RUnlock()
-	return m.agents[name]
+func cloneCommands(commands []config.CommandInfo) []config.CommandInfo {
+	result := make([]config.CommandInfo, len(commands))
+	copy(result, commands)
+	return result
 }

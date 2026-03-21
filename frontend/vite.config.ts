@@ -2,7 +2,6 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 
-// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
   optimizeDeps: {
@@ -10,10 +9,12 @@ export default defineConfig({
     include: ['react', 'react-dom']
   },
   build: {
-    // Set output directory to web folder in project root
     outDir: resolve('../web'),
-    // Enable code splitting
     rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        control: resolve(__dirname, 'control.html')
+      },
       output: {
         manualChunks: {
           vendor: ['react', 'react-dom'],
@@ -21,10 +22,7 @@ export default defineConfig({
         }
       }
     },
-    // Use esbuild for minification (faster than terser)
     minify: 'esbuild',
-    // Optimize chunk size
     chunkSizeWarningLimit: 1000
   }
 });
-

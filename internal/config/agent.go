@@ -9,38 +9,76 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// AgentConfig represents the agent configuration
-type AgentConfig struct {
+// AgentBootstrapConfig represents the minimal startup configuration for an agent.
+type AgentBootstrapConfig struct {
 	Server struct {
-		Host     string `yaml:"host"`
-		Port     int    `yaml:"port"`
-		Password string `yaml:"password"`
+		Host  string `yaml:"host"`
+		Port  int    `yaml:"port"`
+		Token string `yaml:"token"`
 	} `yaml:"server"`
 
 	Agent struct {
-		Name    string       `yaml:"name"`
-		Group   string       `yaml:"group"`
-		Details AgentDetails `yaml:"details"`
+		UUID string `yaml:"uuid"`
 	} `yaml:"agent"`
 
 	Log struct {
 		LogLevel string `yaml:"log_level"`
 	} `yaml:"log"`
+}
 
-	Commands        map[string]CommandTemplate `yaml:"commands"`
+// AgentConfig represents the runtime agent configuration delivered by the server.
+type AgentConfig struct {
+	Server struct {
+		Host  string `yaml:"host" json:"host"`
+		Port  int    `yaml:"port" json:"port"`
+		UUID  string `yaml:"uuid" json:"uuid"`
+		Token string `yaml:"token,omitempty" json:"token,omitempty"`
+	} `yaml:"server" json:"server"`
+
+	Agent struct {
+		Name    string       `yaml:"name" json:"name"`
+		Group   string       `yaml:"group" json:"group"`
+		Details AgentDetails `yaml:"details" json:"details"`
+	} `yaml:"agent" json:"agent"`
+
+	Log struct {
+		LogLevel string `yaml:"log_level" json:"log_level"`
+	} `yaml:"log" json:"log"`
+
+	Commands        map[string]CommandTemplate `yaml:"commands" json:"commands"`
+	OrderedCommands []string                   `yaml:"ordered_commands,omitempty" json:"ordered_commands,omitempty"`
 	orderedCommands []string
 }
 
 // CommandTemplate represents a command template configuration
 type CommandTemplate struct {
-	Template     string `yaml:"template"`
-	UsePlugin    string `yaml:"use_plugin"`
-	Description  string `yaml:"description"`
-	IgnoreTarget bool   `yaml:"ignore_target"`
-	MaximumQueue int    `yaml:"maxmium_queue"`
+	Template     string `yaml:"template" json:"template"`
+	UsePlugin    string `yaml:"use_plugin" json:"use_plugin"`
+	Description  string `yaml:"description" json:"description"`
+	IgnoreTarget bool   `yaml:"ignore_target" json:"ignore_target"`
+	MaximumQueue int    `yaml:"maxmium_queue" json:"maxmium_queue"`
 }
 
-// LoadAgentConfig loads agent configuration from the specified file
+// LoadAgentBootstrapConfig loads the minimal local bootstrap configuration.
+func LoadAgentBootstrapConfig(filename string) (*AgentBootstrapConfig, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("error reading agent bootstrap config file: %w", err)
+	}
+
+	var config AgentBootstrapConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("error parsing agent bootstrap config file: %w", err)
+	}
+
+	if config.Log.LogLevel == "" {
+		config.Log.LogLevel = "info"
+	}
+
+	return &config, nil
+}
+
+// LoadAgentConfig loads a full agent configuration from YAML.
 func LoadAgentConfig(filename string) (*AgentConfig, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
@@ -52,13 +90,28 @@ func LoadAgentConfig(filename string) (*AgentConfig, error) {
 		return nil, fmt.Errorf("error parsing agent config file: %w", err)
 	}
 
-	var node yaml.Node
-	if err := yaml.Unmarshal(data, &node); err == nil {
-		config.orderedCommands = extractCommandOrder(&node)
+	return NormalizeAgentConfig(&config, data), nil
+}
+
+// NormalizeAgentConfig normalizes ordering and defaults for a runtime agent config.
+func NormalizeAgentConfig(config *AgentConfig, rawYAML []byte) *AgentConfig {
+	if config == nil {
+		return nil
 	}
 
-	if len(config.orderedCommands) == 0 {
-		config.orderedCommands = extractCommandOrderFromText(string(data))
+	if len(config.OrderedCommands) > 0 {
+		config.orderedCommands = append([]string(nil), config.OrderedCommands...)
+	}
+
+	if len(config.orderedCommands) == 0 && len(rawYAML) > 0 {
+		var node yaml.Node
+		if err := yaml.Unmarshal(rawYAML, &node); err == nil {
+			config.orderedCommands = extractCommandOrder(&node)
+		}
+	}
+
+	if len(config.orderedCommands) == 0 && len(rawYAML) > 0 {
+		config.orderedCommands = extractCommandOrderFromText(string(rawYAML))
 	}
 
 	if len(config.orderedCommands) == 0 {
@@ -69,11 +122,17 @@ func LoadAgentConfig(filename string) (*AgentConfig, error) {
 		slices.Sort(config.orderedCommands)
 	}
 
+	config.OrderedCommands = append([]string(nil), config.orderedCommands...)
+
 	if config.Log.LogLevel == "" {
 		config.Log.LogLevel = "info"
 	}
 
-	return &config, nil
+	if config.Commands == nil {
+		config.Commands = map[string]CommandTemplate{}
+	}
+
+	return config
 }
 
 // extractCommandOrder extracts command order from YAML node structure
@@ -135,7 +194,7 @@ func extractCommandOrderFromText(data string) []string {
 				parts := strings.SplitN(trimmed, ":", 2)
 				if len(parts) > 0 {
 					cmdName := strings.TrimSpace(parts[0])
-					excludedFields := []string{"template", "description", "ignore_target", "maxmium_queue"}
+					excludedFields := []string{"template", "description", "ignore_target", "maxmium_queue", "use_plugin"}
 
 					if cmdName != "" && !slices.Contains(excludedFields, cmdName) {
 						if !slices.Contains(commands, cmdName) {

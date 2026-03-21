@@ -1,9 +1,11 @@
 package config
 
 import (
-	"YALS/internal/logger"
 	"fmt"
 	"os"
+	"path/filepath"
+
+	"YALS/internal/logger"
 
 	"gopkg.in/yaml.v3"
 )
@@ -33,14 +35,18 @@ type Config struct {
 		MaxCommands int  `yaml:"max_commands"`
 		TimeWindow  int  `yaml:"time_window"`
 	} `yaml:"rate_limit"`
+
+	Database struct {
+		Path string `yaml:"path"`
+	} `yaml:"database"`
 }
 
 // AgentDetails represents additional agent information
 type AgentDetails struct {
-	Location    string `yaml:"location"`
-	Datacenter  string `yaml:"datacenter"`
-	TestIP      string `yaml:"test_ip"`
-	Description string `yaml:"description"`
+	Location    string `yaml:"location" json:"location"`
+	Datacenter  string `yaml:"datacenter" json:"datacenter"`
+	TestIP      string `yaml:"test_ip" json:"test_ip"`
+	Description string `yaml:"description" json:"description"`
 }
 
 // LoadConfig loads configuration from the specified file
@@ -58,6 +64,14 @@ func LoadConfig(filename string) (*Config, error) {
 	if config.Connection.KeepAlive < 0 {
 		logger.Warnf("keepalive cannot be negative, setting to 0 (disabled)")
 		config.Connection.KeepAlive = 0
+	}
+
+	if config.Server.LogLevel == "" {
+		config.Server.LogLevel = "info"
+	}
+
+	if config.Database.Path == "" {
+		config.Database.Path = filepath.Clean("./data/yals.db")
 	}
 
 	globalConfig = &config

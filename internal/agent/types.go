@@ -42,10 +42,13 @@ type CommandResponse struct {
 	IsError    bool   `json:"is_error"`
 }
 
-// NewClient creates a new agent client (deprecated, use NewClientWithConfig)
-func NewClient(password string) *Client {
+// NewClient creates a new agent client with minimal bootstrap settings.
+func NewClient(host string, port int, uuid string, token string) *Client {
 	agentConfig := &config.AgentConfig{}
-	agentConfig.Server.Password = password
+	agentConfig.Server.Host = host
+	agentConfig.Server.Port = port
+	agentConfig.Server.UUID = uuid
+	agentConfig.Server.Token = token
 	return NewClientWithConfig(agentConfig)
 }
 

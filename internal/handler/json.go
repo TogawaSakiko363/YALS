@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -9,13 +10,16 @@ import (
 	"strings"
 	"time"
 
+	"YALS/internal/agent"
 	"YALS/internal/config"
 	"YALS/internal/logger"
+	serverstore "YALS/internal/store/server"
 	"YALS/internal/utils"
 	"YALS/internal/validator"
+
+	"github.com/google/uuid"
 )
 
-// CommandRequest represents a command request from the client
 type CommandRequest struct {
 	Type      string `json:"type"`
 	Agent     string `json:"agent,omitempty"`
@@ -25,7 +29,6 @@ type CommandRequest struct {
 	IPVersion string `json:"ip_version,omitempty"`
 }
 
-// CommandResponse represents a command response to the client
 type CommandResponse struct {
 	Success bool   `json:"success"`
 	Agent   string `json:"agent"`
@@ -35,7 +38,6 @@ type CommandResponse struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// StreamingCommandResponse represents a streaming command response
 type StreamingCommandResponse struct {
 	Type       string `json:"type"`
 	Success    bool   `json:"success"`
@@ -48,40 +50,26 @@ type StreamingCommandResponse struct {
 	CommandID  string `json:"command_id,omitempty"`
 }
 
-// AgentStatusUpdate represents an agent status update
 type AgentStatusUpdate struct {
 	Type   string           `json:"type"`
 	Groups []map[string]any `json:"groups"`
 }
 
-// CommandsListResponse represents the response for available commands
 type CommandsListResponse struct {
 	Type     string                    `json:"type"`
 	Commands []validator.CommandDetail `json:"commands"`
 }
 
-// AppVersion represents the application configuration response
 type AppVersion struct {
 	Type    string            `json:"type"`
 	Version string            `json:"version"`
 	Config  map[string]string `json:"config"`
 }
 
-// SessionResponse represents the response for session creation
 type SessionResponse struct {
 	SessionID string `json:"session_id"`
 }
 
-// NodeInfo represents node information response
-type NodeInfo struct {
-	Name     string   `json:"name"`
-	Group    string   `json:"group"`
-	Status   int      `json:"status"`
-	Details  string   `json:"details"`
-	Commands []string `json:"commands"`
-}
-
-// NodesResponse represents the response for /api/node
 type NodesResponse struct {
 	Version      string           `json:"version"`
 	TotalNodes   int              `json:"total_nodes"`
@@ -90,7 +78,6 @@ type NodesResponse struct {
 	Groups       []map[string]any `json:"groups"`
 }
 
-// ExecRequest represents command execution request
 type ExecRequest struct {
 	Agent     string `json:"agent"`
 	Command   string `json:"command"`
@@ -98,17 +85,46 @@ type ExecRequest struct {
 	IPVersion string `json:"ip_version"`
 }
 
-// StopRequest represents command stop request
 type StopRequest struct {
 	CommandID string `json:"command_id"`
 }
 
-// handleIndex handles the index page
+type ControlLoginRequest struct {
+	Password string `json:"password"`
+}
+
+type ControlSessionResponse struct {
+	Authenticated bool   `json:"authenticated"`
+	Token         string `json:"token,omitempty"`
+}
+
+type AgentConfigPayload struct {
+	UUID     string                      `json:"uuid,omitempty"`
+	Token    string                      `json:"token"`
+	Name     string                      `json:"name"`
+	Group    string                      `json:"group"`
+	Details  config.AgentDetails         `json:"details"`
+	Commands []serverstore.CommandRecord `json:"commands"`
+}
+
+type AgentConfigResponse struct {
+	UUID      string                      `json:"uuid"`
+	Token     string                      `json:"token"`
+	Name      string                      `json:"name"`
+	Group     string                      `json:"group"`
+	Details   config.AgentDetails         `json:"details"`
+	Commands  []serverstore.CommandRecord `json:"commands"`
+	CreatedAt string                      `json:"created_at"`
+	UpdatedAt string                      `json:"updated_at"`
+}
+
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
-	case "/":
-		indexPath := filepath.Join(h.webDir, "index.html")
-		http.ServeFile(w, r, indexPath)
+	case "/", "/index", "/index.html":
+		http.ServeFile(w, r, filepath.Join(h.webDir, "index.html"))
+		return
+	case "/control", "/control/", "/control.html":
+		http.ServeFile(w, r, filepath.Join(h.webDir, "control.html"))
 		return
 	default:
 		filePath := filepath.Join(h.webDir, r.URL.Path[1:])
@@ -117,21 +133,18 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if r.Header.Get("Accept") != "" && !strings.Contains(r.Header.Get("Accept"), "application/html") {
-			indexPath := filepath.Join(h.webDir, "index.html")
-			http.ServeFile(w, r, indexPath)
+		accept := r.Header.Get("Accept")
+		if accept != "" && !strings.Contains(accept, "text/html") && !strings.Contains(accept, "application/xhtml+xml") {
+			http.ServeFile(w, r, filepath.Join(h.webDir, "index.html"))
 			return
 		}
 
 		http.NotFound(w, r)
-		return
 	}
 }
 
-// getRealIP gets the real client IP address
 func (h *Handler) getRealIP(r *http.Request) string {
-	ip := r.Header.Get("X-Real-IP")
-	if ip != "" {
+	if ip := r.Header.Get("X-Real-IP"); ip != "" {
 		return ip
 	}
 
@@ -146,26 +159,22 @@ func (h *Handler) getRealIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// generateCommandID generates a unique command ID
-func (h *Handler) generateCommandID(command, target, agent, sessionID string) string {
-	return fmt.Sprintf("%s-%s-%s-%s", command, target, agent, sessionID)
+func (h *Handler) generateCommandID(command, target, agentName, sessionID string) string {
+	return fmt.Sprintf("%s-%s-%s-%s", command, target, agentName, sessionID)
 }
 
-// setActiveCommand safely sets an active command
 func (h *Handler) setActiveCommand(commandID string, stopChan chan bool) {
 	h.commandsLock.Lock()
 	h.activeCommands[commandID] = stopChan
 	h.commandsLock.Unlock()
 }
 
-// removeActiveCommand safely removes an active command
 func (h *Handler) removeActiveCommand(commandID string) {
 	h.commandsLock.Lock()
 	delete(h.activeCommands, commandID)
 	h.commandsLock.Unlock()
 }
 
-// stopActiveCommand safely stops and removes an active command
 func (h *Handler) stopActiveCommand(commandID string) bool {
 	h.commandsLock.Lock()
 	defer h.commandsLock.Unlock()
@@ -178,7 +187,6 @@ func (h *Handler) stopActiveCommand(commandID string) bool {
 	return false
 }
 
-// getCommandConfig gets the command configuration from the agent manager
 func (h *Handler) getCommandConfig(agentName, commandName string) (config.CommandInfo, bool) {
 	agents := h.agentManager.GetAgents()
 	for _, a := range agents {
@@ -194,30 +202,21 @@ func (h *Handler) getCommandConfig(agentName, commandName string) (config.Comman
 	return config.CommandInfo{}, false
 }
 
-// handleGetSession handles the session creation API
 func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	sessionID := h.generateSessionID()
-
-	response := SessionResponse{
-		SessionID: sessionID,
-	}
-
+	response := SessionResponse{SessionID: h.generateSessionID()}
 	w.Header().Set("Content-Type", "application/json")
 	h.setNoCacheHeaders(w)
-
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		logger.Errorf("Failed to encode session response: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
 	}
 }
 
-// setNoCacheHeaders sets headers to prevent CDN caching for API responses
 func (h *Handler) setNoCacheHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
@@ -228,12 +227,9 @@ func (h *Handler) setNoCacheHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-XSS-Protection", "1; mode=block")
 }
 
-// GenerateRandomString generates a random alphanumeric string of specified length
 func GenerateRandomString(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
-
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-
 	b := make([]byte, length)
 	for i := range b {
 		b[i] = charset[rng.Intn(len(charset))]
@@ -241,25 +237,14 @@ func GenerateRandomString(length int) string {
 	return string(b)
 }
 
-// generateSessionID generates a unique session ID
 func (h *Handler) generateSessionID() string {
-	timestamp := time.Now().UnixMilli()
-	randomStr := GenerateRandomString(10)
-	return fmt.Sprintf("session_%d_%s", timestamp, randomStr)
+	return fmt.Sprintf("session_%d_%s", time.Now().UnixMilli(), GenerateRandomString(10))
 }
 
-// validateSessionID validates if a session ID is valid
 func (h *Handler) validateSessionID(sessionID string) bool {
-	if sessionID == "" {
-		return false
-	}
-	if !strings.HasPrefix(sessionID, "session_") {
-		return false
-	}
-	return true
+	return sessionID != "" && strings.HasPrefix(sessionID, "session_")
 }
 
-// handleGetNodes handles GET /api/node - returns node list and status
 func (h *Handler) handleGetNodes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -273,22 +258,239 @@ func (h *Handler) handleGetNodes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stats := h.agentManager.GetAgentStats()
-	groups := h.agentManager.GetAgentGroups()
-
 	response := NodesResponse{
 		Version:      utils.GetAppVersion(),
 		TotalNodes:   stats["total"].(int),
 		OnlineNodes:  stats["online"].(int),
 		OfflineNodes: stats["offline"].(int),
-		Groups:       groups,
+		Groups:       h.agentManager.GetAgentGroups(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	h.setNoCacheHeaders(w)
-
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		logger.Errorf("Failed to encode nodes response: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) handleControlLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
+	}
+
+	var req ControlLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	cfg := config.GetConfig()
+	if req.Password != cfg.Server.Password {
+		http.Error(w, "Invalid password", http.StatusUnauthorized)
+		return
+	}
+
+	token := GenerateRandomString(32)
+	h.controlSessions.Store(token, time.Now().Add(24*time.Hour))
+	w.Header().Set("Content-Type", "application/json")
+	h.setNoCacheHeaders(w)
+	_ = json.NewEncoder(w).Encode(ControlSessionResponse{Authenticated: true, Token: token})
+}
+
+func (h *Handler) handleControlSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	token := h.getControlToken(r)
+	if !h.validateControlToken(token) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	h.setNoCacheHeaders(w)
+	_ = json.NewEncoder(w).Encode(ControlSessionResponse{Authenticated: true, Token: token})
+}
+
+func (h *Handler) handleControlAgents(w http.ResponseWriter, r *http.Request) {
+	if !h.requireControlAuth(w, r) {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		h.handleControlListAgents(w)
+	case http.MethodPost:
+		h.handleControlCreateAgent(w, r)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *Handler) handleControlAgentByUUID(w http.ResponseWriter, r *http.Request) {
+	if !h.requireControlAuth(w, r) {
+		return
+	}
+
+	uuidValue := strings.TrimPrefix(r.URL.Path, "/api/control/agents/")
+	if uuidValue == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		h.handleControlUpdateAgent(w, r, uuidValue)
+	case http.MethodDelete:
+		h.handleControlDeleteAgent(w, uuidValue)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *Handler) handleControlListAgents(w http.ResponseWriter) {
+	records, err := h.store.ListAgents()
+	if err != nil {
+		logger.Errorf("Failed to list stored agents: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	response := make([]AgentConfigResponse, 0, len(records))
+	for _, record := range records {
+		response = append(response, agentRecordToResponse(record))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	h.setNoCacheHeaders(w)
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func (h *Handler) handleControlCreateAgent(w http.ResponseWriter, r *http.Request) {
+	var payload AgentConfigPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	payload.UUID = uuid.NewString()
+	if payload.Token == "" {
+		payload.Token = GenerateRandomString(32)
+	}
+	record, err := h.store.UpsertAgent(serverstore.AgentUpsertInput{
+		UUID:     payload.UUID,
+		Token:    payload.Token,
+		Name:     payload.Name,
+		Group:    payload.Group,
+		Details:  payload.Details,
+		Commands: payload.Commands,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	h.syncStoredAgent(*record)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(agentRecordToResponse(*record))
+}
+
+func (h *Handler) handleControlUpdateAgent(w http.ResponseWriter, r *http.Request, uuidValue string) {
+	var payload AgentConfigPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	record, err := h.store.UpsertAgent(serverstore.AgentUpsertInput{
+		UUID:     uuidValue,
+		Token:    payload.Token,
+		Name:     payload.Name,
+		Group:    payload.Group,
+		Details:  payload.Details,
+		Commands: payload.Commands,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	h.syncStoredAgent(*record)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(agentRecordToResponse(*record))
+}
+
+func (h *Handler) handleControlDeleteAgent(w http.ResponseWriter, uuidValue string) {
+	if err := h.store.DeleteAgent(uuidValue); err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Agent not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+}
+
+func (h *Handler) getControlToken(r *http.Request) string {
+	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+		return strings.TrimSpace(authHeader[7:])
+	}
+	return strings.TrimSpace(r.URL.Query().Get("token"))
+}
+
+func (h *Handler) validateControlToken(token string) bool {
+	if token == "" {
+		return false
+	}
+	value, ok := h.controlSessions.Load(token)
+	if !ok {
+		return false
+	}
+	expiresAt, ok := value.(time.Time)
+	if !ok || time.Now().After(expiresAt) {
+		h.controlSessions.Delete(token)
+		return false
+	}
+	return true
+}
+
+func (h *Handler) requireControlAuth(w http.ResponseWriter, r *http.Request) bool {
+	if !h.validateControlToken(h.getControlToken(r)) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	return true
+}
+
+func (h *Handler) syncStoredAgent(record serverstore.AgentRecord) {
+	runtimeConfig := serverstore.BuildRuntimeConfig(config.GetConfig().Server.Host, config.GetConfig().Server.Port, record, config.GetConfig().Server.LogLevel)
+	h.agentManager.RegisterAgent(agent.AgentRegistration{
+		UUID:     record.UUID,
+		Name:     record.Name,
+		Group:    record.Group,
+		Details:  record.Details,
+		Commands: runtimeConfig.GetAvailableCommands(),
+	}, nil)
+}
+
+func agentRecordToResponse(record serverstore.AgentRecord) AgentConfigResponse {
+	return AgentConfigResponse{
+		UUID:      record.UUID,
+		Token:     record.Token,
+		Name:      record.Name,
+		Group:     record.Group,
+		Details:   record.Details,
+		Commands:  record.Commands,
+		CreatedAt: record.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: record.UpdatedAt.Format(time.RFC3339),
 	}
 }

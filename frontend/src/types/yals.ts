@@ -7,10 +7,15 @@ export interface AgentDetails {
 
 export interface AgentCommand {
   name: string;
+  template?: string;
+  use_plugin?: string;
+  description?: string;
   ignore_target?: boolean;
+  maxmium_queue?: number;
 }
 
 export interface Agent {
+  uuid?: string;
   name: string;
   status: number;
   location?: string;
@@ -27,8 +32,8 @@ export interface CommandResponse {
   output?: string;
   error?: string;
   timestamp?: number;
-  stopped?: boolean; // Indicates if command was stopped by user
-  ip_version?: string; // IP version used: "auto", "ipv4", or "ipv6"
+  stopped?: boolean;
+  ip_version?: string;
 }
 
 export interface AgentGroup {
@@ -53,7 +58,7 @@ export interface YalsMessage {
   output?: string;
   error?: string;
   is_complete?: boolean;
-  stopped?: boolean; // Indicates if command was stopped by user
+  stopped?: boolean;
 }
 
 export type CommandType = string;
@@ -62,7 +67,9 @@ export interface CommandConfig {
   name: string;
   description: string;
   template: string;
-  ignore_target?: boolean;  // Whether target parameter is ignored
+  use_plugin?: string;
+  ignore_target?: boolean;
+  maxmium_queue?: number;
 }
 
 export interface CommandsResponse {
@@ -76,7 +83,27 @@ export interface CommandHistory {
   agent: string;
   timestamp: number;
   response?: CommandResponse;
-  ip_version?: string; // IP version: "auto", "ipv4", or "ipv6"
+  ip_version?: string;
+}
+
+export interface ControlSessionResponse {
+  authenticated: boolean;
+  token?: string;
+}
+
+export interface AgentConfigPayload {
+  uuid?: string;
+  token: string;
+  name: string;
+  group: string;
+  details: AgentDetails;
+  commands: AgentCommand[];
+}
+
+export interface AgentConfigRecord extends AgentConfigPayload {
+  uuid: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export type IPVersion = 'auto' | 'ipv4' | 'ipv6';

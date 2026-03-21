@@ -2,7 +2,9 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"YALS/internal/config"
 	"YALS/internal/logger"
 	"YALS/internal/proto"
+	serverstore "YALS/internal/store/server"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -32,10 +35,12 @@ type Handler struct {
 	commandsLock    sync.RWMutex
 	webDir          string
 	rateLimiter     *RateLimiter
+	store           *serverstore.Store
+	controlSessions sync.Map
 }
 
 // NewHandler creates a new handler
-func NewHandler(agentManager *agent.Manager, pingInterval, pongWait time.Duration) *Handler {
+func NewHandler(agentManager *agent.Manager, store *serverstore.Store, pingInterval, pongWait time.Duration) *Handler {
 	cfg := config.GetConfig()
 
 	rateLimiter := &RateLimiter{
@@ -56,51 +61,80 @@ func NewHandler(agentManager *agent.Manager, pingInterval, pongWait time.Duratio
 		pongWait:        pongWait,
 		activeCommands:  make(map[string]chan bool),
 		rateLimiter:     rateLimiter,
+		store:           store,
 	}
 }
 
 // Handshake implements the gRPC Handshake method
 func (h *Handler) Handshake(ctx context.Context, req *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
-	cfg := config.GetConfig()
-	if err := proto.ValidateToken(ctx, cfg.Server.Password); err != nil {
-		logger.Warnf("Unauthorized agent connection attempt")
-		return nil, err
+	if req == nil || req.UUID == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "missing agent uuid")
+	}
+	if strings.TrimSpace(req.Token) == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "missing agent token")
 	}
 
-	logger.Infof("Agent handshake received: %s (Group: %s)", req.Name, req.Group)
+	record, err := h.store.GetAgentByUUID(req.UUID)
+	if err != nil {
+		logger.Warnf("Unauthorized agent connection attempt for uuid: %s", req.UUID)
+		return nil, status.Errorf(codes.Unauthenticated, "unknown agent uuid")
+	}
+	if strings.TrimSpace(record.Token) != strings.TrimSpace(req.Token) {
+		logger.Warnf("Invalid token for agent uuid: %s", req.UUID)
+		return nil, status.Errorf(codes.Unauthenticated, "invalid agent token")
+	}
 
-	h.agentManager.RegisterAgent(req.Name, req.Group, req.Details, req.Commands, nil)
+	runtimeConfig := serverstore.BuildRuntimeConfig(config.GetConfig().Server.Host, config.GetConfig().Server.Port, *record, config.GetConfig().Server.LogLevel)
+	configJSON, err := json.Marshal(runtimeConfig)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to encode agent config")
+	}
 
+	h.agentManager.RegisterAgent(agent.AgentRegistration{
+		UUID:     record.UUID,
+		Name:     record.Name,
+		Group:    record.Group,
+		Details:  record.Details,
+		Commands: runtimeConfig.GetAvailableCommands(),
+	}, nil)
+
+	logger.Infof("Agent handshake received: %s (%s)", record.Name, record.UUID)
 	return &proto.HandshakeResponse{
 		Success: true,
 		Message: "Agent registered successfully",
+		Config:  configJSON,
 	}, nil
 }
 
 // StreamCommands implements the gRPC StreamCommands method
 func (h *Handler) StreamCommands(stream proto.AgentService_StreamCommandsServer) error {
 	ctx := stream.Context()
-	cfg := config.GetConfig()
-	if err := proto.ValidateToken(ctx, cfg.Server.Password); err != nil {
-		logger.Warnf("Unauthorized agent stream attempt")
+	md, _ := metadata.FromIncomingContext(ctx)
+	uuids := md.Get("agent-uuid")
+	if len(uuids) == 0 || uuids[0] == "" {
+		return status.Errorf(codes.InvalidArgument, "missing agent uuid")
+	}
+	if err := proto.ValidateToken(ctx, h.lookupAgentToken(uuids[0])); err != nil {
 		return err
 	}
 
-	md, _ := metadata.FromIncomingContext(ctx)
-	names := md.Get("agent-name")
-
-	if len(names) == 0 {
-		return status.Errorf(codes.InvalidArgument, "missing agent name")
+	uuidValue := uuids[0]
+	agentInfo, err := h.agentManager.RegisterAgentStream(uuidValue, stream)
+	if err != nil {
+		return status.Errorf(codes.NotFound, err.Error())
 	}
+	defer h.agentManager.UnregisterAgentStream(uuidValue)
 
-	agentName := names[0]
-
-	h.agentManager.RegisterAgentStream(agentName, "", stream)
-	defer h.agentManager.UnregisterAgentStream(agentName)
-
-	logger.Infof("Agent stream connected: %s", agentName)
-
+	logger.Infof("Agent stream connected: %s (%s)", agentInfo.Name, uuidValue)
 	return h.agentManager.HandleAgentConnection(stream)
+}
+
+func (h *Handler) lookupAgentToken(uuidValue string) string {
+	record, err := h.store.GetAgentByUUID(uuidValue)
+	if err != nil {
+		return ""
+	}
+	return record.Token
 }
 
 // SetupRoutes sets up the HTTP routes
@@ -112,6 +146,10 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux, webDir string) {
 	mux.HandleFunc("/api/node", h.handleGetNodes)
 	mux.HandleFunc("/api/exec", h.handleExecCommand)
 	mux.HandleFunc("/api/stop", h.handleStopCommand)
+	mux.HandleFunc("/api/control/login", h.handleControlLogin)
+	mux.HandleFunc("/api/control/session", h.handleControlSession)
+	mux.HandleFunc("/api/control/agents", h.handleControlAgents)
+	mux.HandleFunc("/api/control/agents/", h.handleControlAgentByUUID)
 
 	fs := http.FileServer(http.Dir(webDir))
 	mux.Handle("/assets/", fs)

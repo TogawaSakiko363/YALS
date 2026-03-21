@@ -5,6 +5,7 @@ type CommandInfo struct {
 	Name         string `json:"name"`
 	Template     string `json:"template"`
 	UsePlugin    string `json:"use_plugin"`
+	Description  string `json:"description"`
 	IgnoreTarget bool   `json:"ignore_target"`
 	MaximumQueue int    `json:"maxmium_queue"`
 }
@@ -19,6 +20,7 @@ func (c *AgentConfig) GetAvailableCommands() []CommandInfo {
 				Name:         name,
 				Template:     template.Template,
 				UsePlugin:    template.UsePlugin,
+				Description:  template.Description,
 				IgnoreTarget: template.IgnoreTarget,
 				MaximumQueue: template.MaximumQueue,
 			})
