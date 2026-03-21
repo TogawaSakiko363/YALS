@@ -3,6 +3,8 @@ package handler
 import (
 	"sync"
 	"time"
+
+	"YALS/internal/config"
 )
 
 // RateLimiter manages rate limiting for command execution
@@ -17,6 +19,30 @@ type RateLimiter struct {
 // SessionRateLimit tracks command execution for a session
 type SessionRateLimit struct {
 	timestamps []time.Time
+}
+
+// NewRateLimiter creates a limiter from runtime settings.
+func NewRateLimiter(settings config.RuntimeSettings) *RateLimiter {
+	config.NormalizeRuntimeSettings(&settings)
+	return &RateLimiter{
+		enabled:     settings.RateLimit.Enabled,
+		maxCommands: settings.RateLimit.MaxCommands,
+		timeWindow:  time.Duration(settings.RateLimit.TimeWindow) * time.Second,
+		sessions:    make(map[string]*SessionRateLimit),
+	}
+}
+
+// Update applies hot runtime settings to the limiter.
+func (rl *RateLimiter) Update(settings config.RuntimeSettings) {
+	config.NormalizeRuntimeSettings(&settings)
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	rl.enabled = settings.RateLimit.Enabled
+	rl.maxCommands = settings.RateLimit.MaxCommands
+	rl.timeWindow = time.Duration(settings.RateLimit.TimeWindow) * time.Second
+	if rl.sessions == nil {
+		rl.sessions = make(map[string]*SessionRateLimit)
+	}
 }
 
 // checkRateLimit checks if a session has exceeded the rate limit

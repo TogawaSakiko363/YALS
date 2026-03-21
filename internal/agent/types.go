@@ -14,6 +14,7 @@ var shellOperators = []string{"|", "&&", "||", ">", "<", ";"}
 type ActiveCommand struct {
 	Cmd         *exec.Cmd
 	FullCommand string
+	CommandName string
 }
 
 // Client represents an agent client that connects to the server

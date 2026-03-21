@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"YALS/internal/agent"
 	"YALS/internal/config"
@@ -29,26 +28,19 @@ type Handler struct {
 	sessionConns    map[string]*interface{}
 	commandSessions map[string]string
 	clientsLock     sync.RWMutex
-	pingInterval    time.Duration
-	pongWait        time.Duration
 	activeCommands  map[string]chan bool
 	commandsLock    sync.RWMutex
 	webDir          string
 	rateLimiter     *RateLimiter
 	store           *serverstore.Store
 	controlSessions sync.Map
+	runtimeMu       sync.RWMutex
+	runtimeSettings config.RuntimeSettings
 }
 
 // NewHandler creates a new handler
-func NewHandler(agentManager *agent.Manager, store *serverstore.Store, pingInterval, pongWait time.Duration) *Handler {
-	cfg := config.GetConfig()
-
-	rateLimiter := &RateLimiter{
-		enabled:     cfg.RateLimit.Enabled,
-		maxCommands: cfg.RateLimit.MaxCommands,
-		timeWindow:  time.Duration(cfg.RateLimit.TimeWindow) * time.Second,
-		sessions:    make(map[string]*SessionRateLimit),
-	}
+func NewHandler(agentManager *agent.Manager, store *serverstore.Store, runtimeSettings config.RuntimeSettings) *Handler {
+	rateLimiter := NewRateLimiter(runtimeSettings)
 
 	return &Handler{
 		agentManager:    agentManager,
@@ -57,12 +49,27 @@ func NewHandler(agentManager *agent.Manager, store *serverstore.Store, pingInter
 		clientSessions:  make(map[*interface{}]string),
 		sessionConns:    make(map[string]*interface{}),
 		commandSessions: make(map[string]string),
-		pingInterval:    pingInterval,
-		pongWait:        pongWait,
 		activeCommands:  make(map[string]chan bool),
 		rateLimiter:     rateLimiter,
 		store:           store,
+		runtimeSettings: runtimeSettings,
 	}
+}
+
+// GetRuntimeSettings returns current hot runtime settings.
+func (h *Handler) GetRuntimeSettings() config.RuntimeSettings {
+	h.runtimeMu.RLock()
+	defer h.runtimeMu.RUnlock()
+	return h.runtimeSettings
+}
+
+// UpdateRuntimeSettings replaces runtime settings and updates dependent components.
+func (h *Handler) UpdateRuntimeSettings(settings config.RuntimeSettings) {
+	config.NormalizeRuntimeSettings(&settings)
+	h.runtimeMu.Lock()
+	h.runtimeSettings = settings
+	h.runtimeMu.Unlock()
+	h.rateLimiter.Update(settings)
 }
 
 // Handshake implements the gRPC Handshake method
@@ -84,7 +91,8 @@ func (h *Handler) Handshake(ctx context.Context, req *proto.HandshakeRequest) (*
 		return nil, status.Errorf(codes.Unauthenticated, "invalid agent token")
 	}
 
-	runtimeConfig := serverstore.BuildRuntimeConfig(config.GetConfig().Server.Host, config.GetConfig().Server.Port, *record, config.GetConfig().Server.LogLevel)
+	bootstrapCfg := config.GetConfig()
+	runtimeConfig := serverstore.BuildRuntimeConfig(bootstrapCfg.Server.Host, bootstrapCfg.Server.Port, *record, bootstrapCfg.Server.LogLevel)
 	configJSON, err := json.Marshal(runtimeConfig)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to encode agent config")
@@ -150,6 +158,7 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux, webDir string) {
 	mux.HandleFunc("/api/control/session", h.handleControlSession)
 	mux.HandleFunc("/api/control/agents", h.handleControlAgents)
 	mux.HandleFunc("/api/control/agents/", h.handleControlAgentByUUID)
+	mux.HandleFunc("/api/control/runtime", h.handleControlRuntime)
 
 	fs := http.FileServer(http.Dir(webDir))
 	mux.Handle("/assets/", fs)

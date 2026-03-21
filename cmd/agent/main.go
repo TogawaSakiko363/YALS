@@ -37,7 +37,6 @@ func main() {
 
 	logger.SetGlobalLevelFromString("info")
 
-	logger.Infof("Starting YALS Agent bootstrap")
 	logger.Infof("Server: %s:%d", *serverHost, *serverPort)
 	logger.Infof("UUID: %s", *agentUUID)
 

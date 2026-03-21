@@ -27,24 +27,30 @@ interface AgentItemProps {
   isExpanded: boolean;
   isSelected: boolean;
   isOnline: boolean;
+  disabled?: boolean;
   onToggle: () => void;
   onSelect: () => void;
 }
 
-const AgentItem: React.FC<AgentItemProps> = React.memo(({ 
-  agent, 
-  isExpanded, 
-  isSelected, 
-  isOnline, 
+const AgentItem: React.FC<AgentItemProps> = React.memo(({
+  agent,
+  isExpanded,
+  isSelected,
+  isOnline,
+  disabled = false,
   onToggle
 }) => {
   const StatusIcon = isOnline ? CheckCircle : XCircle;
 
   return (
-    <div className={`agent-item-container ${isOnline ? 'online' : 'offline'} ${isSelected ? 'selected' : ''}`}>
+    <div className={`agent-item-container ${isOnline ? 'online' : 'offline'} ${isSelected ? 'selected' : ''} ${disabled ? 'opacity-60 pointer-events-none' : ''}`}>
       <div
         className="agent-item-header"
-        onClick={onToggle}
+        onClick={() => {
+          if (!disabled) {
+            onToggle();
+          }
+        }}
       >
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <StatusIcon className={`status-icon ${isOnline ? 'online' : 'offline'}`} />
@@ -67,7 +73,7 @@ const AgentItem: React.FC<AgentItemProps> = React.memo(({
           <ChevronDown className="w-4 h-4 text-gray-400 ml-2 flex-shrink-0" />
         )}
       </div>
-      
+
       <AgentDetails agent={agent} isExpanded={isExpanded} />
     </div>
   );
@@ -76,54 +82,51 @@ const AgentItem: React.FC<AgentItemProps> = React.memo(({
 interface AgentSelectorProps {
   groups: AgentGroupData;
   selectedAgent: string | null;
+  disabled?: boolean;
   onSelectAgent: (agentName: string) => void;
 }
 
 export const AgentSelector: React.FC<AgentSelectorProps> = React.memo(({
   groups,
   selectedAgent,
+  disabled = false,
   onSelectAgent
 }) => {
   const [selectedGroup, setSelectedGroup] = useState('all');
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
 
-  // Extract group configuration from backend groups data (supports ordered array format)
   const groupConfig = useMemo(() => {
     if (Array.isArray(groups)) {
-      // New format: ordered array
       return groups
         .filter(group => Array.isArray(group.agents))
         .map(group => ({
           name: group.name,
           agents: group.agents.map(agent => agent.name)
         }));
-    } else {
-      // Old format: object
-      return Object.entries(groups)
-        .filter(([, agents]) => Array.isArray(agents))
-        .map(([groupName, agents]) => ({
-          name: groupName,
-          agents: agents.map(agent => agent.name)
-        }));
     }
+
+    return Object.entries(groups)
+      .filter(([, agents]) => Array.isArray(agents))
+      .map(([groupName, agents]) => ({
+        name: groupName,
+        agents: agents.map(agent => agent.name)
+      }));
   }, [groups]);
 
-  // Filter agents based on selected group
   const filteredAgents = useMemo(() => {
     if (selectedGroup === 'all') {
       if (Array.isArray(groups)) {
         return groups.flatMap(group => group.agents || []);
-      } else {
-        return Object.values(groups).flat();
       }
+      return Object.values(groups).flat();
     }
-    
+
     if (Array.isArray(groups)) {
       const selectedGroupData = groups.find(group => group.name === selectedGroup);
       return selectedGroupData?.agents || [];
-    } else {
-      return groups[selectedGroup] || [];
     }
+
+    return groups[selectedGroup] || [];
   }, [groups, selectedGroup]);
 
   const { onlineAgents, offlineAgents } = useMemo(() => ({
@@ -132,9 +135,12 @@ export const AgentSelector: React.FC<AgentSelectorProps> = React.memo(({
   }), [filteredAgents]);
 
   const handleAgentToggle = useCallback((agent: Agent) => {
+    if (disabled) {
+      return;
+    }
     onSelectAgent(agent.name);
     setExpandedAgent(expandedAgent === agent.name ? null : agent.name);
-  }, [onSelectAgent, expandedAgent]);
+  }, [disabled, onSelectAgent, expandedAgent]);
 
   return (
     <div className="bg-white shadow-sm border border-gray-200 p-4 rounded-md">
@@ -146,15 +152,16 @@ export const AgentSelector: React.FC<AgentSelectorProps> = React.memo(({
         </div>
         <select
           value={selectedGroup}
-            onChange={(e) => setSelectedGroup(e.target.value)}
-            className="command-select"
-          >
+          onChange={(e) => setSelectedGroup(e.target.value)}
+          className="command-select"
+          disabled={disabled}
+        >
           <option value="all" className="font-medium">All Nodes</option>
           {groupConfig.map(group => (
             <option key={group.name} value={group.name} className="font-medium">
               {group.name} ({group.agents.length})
             </option>
-           ))}
+          ))}
         </select>
       </div>
 
@@ -171,6 +178,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = React.memo(({
               isExpanded={expandedAgent === agent.name}
               isSelected={selectedAgent === agent.name}
               isOnline={true}
+              disabled={disabled}
               onToggle={() => handleAgentToggle(agent)}
               onSelect={() => onSelectAgent(agent.name)}
             />
@@ -188,7 +196,12 @@ export const AgentSelector: React.FC<AgentSelectorProps> = React.memo(({
                   isExpanded={expandedAgent === agent.name}
                   isSelected={selectedAgent === agent.name}
                   isOnline={false}
-                  onToggle={() => setExpandedAgent(expandedAgent === agent.name ? null : agent.name)}
+                  disabled={disabled}
+                  onToggle={() => {
+                    if (!disabled) {
+                      setExpandedAgent(expandedAgent === agent.name ? null : agent.name);
+                    }
+                  }}
                   onSelect={() => onSelectAgent(agent.name)}
                 />
               ))}

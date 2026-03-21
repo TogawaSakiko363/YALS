@@ -17,9 +17,6 @@ func (m *Manager) GetPluginDescription(pluginName string) string {
 
 	for _, cmdTemplate := range m.config.Commands {
 		if cmdTemplate.UsePlugin == pluginName {
-			if cmdTemplate.Description != "" {
-				return cmdTemplate.Description
-			}
 		}
 	}
 

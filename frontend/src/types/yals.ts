@@ -9,7 +9,6 @@ export interface AgentCommand {
   name: string;
   template?: string;
   use_plugin?: string;
-  description?: string;
   ignore_target?: boolean;
   maxmium_queue?: number;
 }
@@ -65,7 +64,6 @@ export type CommandType = string;
 
 export interface CommandConfig {
   name: string;
-  description: string;
   template: string;
   use_plugin?: string;
   ignore_target?: boolean;
@@ -89,6 +87,18 @@ export interface CommandHistory {
 export interface ControlSessionResponse {
   authenticated: boolean;
   token?: string;
+}
+
+export interface RuntimeSettings {
+  grpc: {
+    ping_interval: number;
+    pong_wait: number;
+  };
+  rate_limit: {
+    enabled: boolean;
+    max_commands: number;
+    time_window: number;
+  };
 }
 
 export interface AgentConfigPayload {

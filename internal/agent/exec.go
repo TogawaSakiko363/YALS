@@ -33,6 +33,7 @@ func (c *Client) convertCommandsToProto() []proto.CommandInfo {
 		protoCommands[i] = proto.CommandInfo{
 			Name:         cmd.Name,
 			IgnoreTarget: cmd.IgnoreTarget,
+			MaximumQueue: cmd.MaximumQueue,
 		}
 	}
 	return protoCommands
@@ -48,8 +49,13 @@ func (c *Client) executeCommandGRPC(stream proto.AgentService_StreamCommandsClie
 		IPVersion:   msg.IPVersion,
 	}
 
-	fullCommand, cmd, err := c.prepareCommand(req)
+	fullCommand, cmd, cmdConfig, err := c.prepareCommand(req)
 	if err != nil {
+		c.sendErrorGRPC(stream, req.CommandID, err.Error())
+		return
+	}
+
+	if err := c.checkCommandQueueLimit(req.CommandName, cmdConfig); err != nil {
 		c.sendErrorGRPC(stream, req.CommandID, err.Error())
 		return
 	}
@@ -57,11 +63,11 @@ func (c *Client) executeCommandGRPC(stream proto.AgentService_StreamCommandsClie
 	logger.Infof("Executing command: %s", req.CommandID)
 
 	if strings.HasPrefix(fullCommand, "plugin:") {
-		c.executePluginCommandGRPC(stream, req, fullCommand)
+		c.executePluginCommandGRPC(stream, req, fullCommand, cmdConfig)
 		return
 	}
 
-	c.storeActiveCommand(req.CommandID, cmd, fullCommand)
+	c.storeActiveCommand(req.CommandID, cmd, fullCommand, req.CommandName)
 	defer c.removeActiveCommand(req.CommandID)
 
 	if err := c.runCommandWithStreamingGRPC(stream, req.CommandID, cmd); err != nil {
@@ -73,15 +79,15 @@ func (c *Client) executeCommandGRPC(stream proto.AgentService_StreamCommandsClie
 }
 
 // prepareCommand validates and prepares a command for execution
-func (c *Client) prepareCommand(req CommandRequest) (string, *exec.Cmd, error) {
+func (c *Client) prepareCommand(req CommandRequest) (string, *exec.Cmd, config.CommandTemplate, error) {
 	if !c.config.IsCommandAllowed(req.CommandName) {
 		logger.Warnf("SECURITY: Blocked unauthorized command '%s' from server", req.CommandName)
-		return "", nil, fmt.Errorf("command '%s' is not allowed", req.CommandName)
+		return "", nil, config.CommandTemplate{}, fmt.Errorf("command '%s' is not allowed", req.CommandName)
 	}
 
 	cmdConfig, exists := c.config.GetCommandConfig(req.CommandName)
 	if !exists {
-		return "", nil, fmt.Errorf("command configuration not found: %s", req.CommandName)
+		return "", nil, config.CommandTemplate{}, fmt.Errorf("command configuration not found: %s", req.CommandName)
 	}
 
 	resolvedTarget := req.Target
@@ -90,12 +96,13 @@ func (c *Client) prepareCommand(req CommandRequest) (string, *exec.Cmd, error) {
 	}
 
 	if cmdConfig.UsePlugin != "" {
-		return c.preparePluginCommand(cmdConfig, resolvedTarget)
+		fullCommand, cmd, err := c.preparePluginCommand(cmdConfig, resolvedTarget)
+		return fullCommand, cmd, cmdConfig, err
 	}
 
 	template := cmdConfig.Template
 	if template == "" {
-		return "", nil, fmt.Errorf("command template not found: %s", req.CommandName)
+		return "", nil, config.CommandTemplate{}, fmt.Errorf("command template not found: %s", req.CommandName)
 	}
 
 	fullCommand := template
@@ -105,10 +112,36 @@ func (c *Client) prepareCommand(req CommandRequest) (string, *exec.Cmd, error) {
 
 	cmd := c.createCommand(fullCommand)
 	if cmd == nil {
-		return "", nil, fmt.Errorf("empty command")
+		return "", nil, config.CommandTemplate{}, fmt.Errorf("empty command")
 	}
 
-	return fullCommand, cmd, nil
+	return fullCommand, cmd, cmdConfig, nil
+}
+
+func (c *Client) checkCommandQueueLimit(commandName string, cmdConfig config.CommandTemplate) error {
+	maximumQueue := cmdConfig.MaximumQueue
+	if cmdConfig.UsePlugin != "" {
+		if hasOverride, overrideQueue := plugin.GetPluginMaximumQueue(cmdConfig.UsePlugin); hasOverride {
+			maximumQueue = overrideQueue
+		}
+	}
+
+	if maximumQueue <= 0 {
+		return nil
+	}
+
+	c.commandsLock.RLock()
+	defer c.commandsLock.RUnlock()
+	count := 0
+	for _, active := range c.activeCommands {
+		if active != nil && active.CommandName == commandName {
+			count++
+		}
+	}
+	if count >= maximumQueue {
+		return fmt.Errorf("execution limit reached for command '%s' (%d/%d)", commandName, count, maximumQueue)
+	}
+	return nil
 }
 
 // resolveTargetIfNeeded resolves domain name to IP if target is a domain
@@ -185,12 +218,13 @@ func (c *Client) createCommand(fullCommand string) *exec.Cmd {
 }
 
 // storeActiveCommand stores a command for potential stopping
-func (c *Client) storeActiveCommand(commandID string, cmd *exec.Cmd, fullCommand string) {
+func (c *Client) storeActiveCommand(commandID string, cmd *exec.Cmd, fullCommand string, commandName string) {
 	c.commandsLock.Lock()
 	defer c.commandsLock.Unlock()
 	c.activeCommands[commandID] = &ActiveCommand{
 		Cmd:         cmd,
 		FullCommand: fullCommand,
+		CommandName: commandName,
 	}
 }
 
@@ -325,72 +359,71 @@ func (c *Client) isComplexCommand(fullCommand string) bool {
 	return false
 }
 
+// sendOutputGRPC sends command output via gRPC stream
+func (c *Client) sendOutputGRPC(stream proto.AgentService_StreamCommandsClient, commandID, output string, isError bool) {
+	msg := &proto.CommandMessage{
+		Type:      "command_output",
+		CommandID: commandID,
+		Output:    output,
+		IsError:   isError,
+	}
+	if err := stream.Send(msg); err != nil {
+		logger.Errorf("Failed to send output: %v", err)
+	}
+}
+
+// sendErrorGRPC sends command error via gRPC stream
+func (c *Client) sendErrorGRPC(stream proto.AgentService_StreamCommandsClient, commandID, errorMsg string) {
+	msg := &proto.CommandMessage{
+		Type:      "command_output",
+		CommandID: commandID,
+		Error:     errorMsg,
+		IsError:   true,
+	}
+	if err := stream.Send(msg); err != nil {
+		logger.Errorf("Failed to send error: %v", err)
+	}
+}
+
+// sendCompletionGRPC sends command completion signal via gRPC stream
+func (c *Client) sendCompletionGRPC(stream proto.AgentService_StreamCommandsClient, commandID string) {
+	msg := &proto.CommandMessage{
+		Type:       "command_output",
+		CommandID:  commandID,
+		IsComplete: true,
+	}
+	if err := stream.Send(msg); err != nil {
+		logger.Errorf("Failed to send completion: %v", err)
+	}
+}
+
 // stopCommand stops a running command
 func (c *Client) stopCommand(commandID string) {
+	c.commandsLock.RLock()
+	activeCmd, exists := c.activeCommands[commandID]
+	c.commandsLock.RUnlock()
+
 	if plugin.StopPluginCommand(commandID) {
-		logger.Infof("Stopping command: %s", commandID)
+		logger.Infof("Stopping plugin command: %s", commandID)
+		c.removeActiveCommand(commandID)
 		return
 	}
 
-	c.commandsLock.Lock()
-	defer c.commandsLock.Unlock()
-
-	activeCmd, exists := c.activeCommands[commandID]
-	if !exists || activeCmd.Cmd.Process == nil {
+	if !exists || activeCmd == nil || activeCmd.Cmd == nil {
 		logger.Warnf("No active command found to stop: %s", commandID)
 		return
 	}
 
 	logger.Infof("Stopping command: %s", commandID)
-
-	timeout := 1 * time.Second
-	if c.isComplexCommand(activeCmd.FullCommand) {
-		timeout = 500 * time.Millisecond
+	if activeCmd.Cmd.Process != nil {
+		if err := activeCmd.Cmd.Process.Kill(); err != nil {
+			logger.Warnf("Failed to kill command %s: %v", commandID, err)
+		}
 	}
-
-	if err := activeCmd.Cmd.Process.Signal(os.Interrupt); err != nil {
-		activeCmd.Cmd.Process.Kill()
-		return
-	}
-
-	go func() {
-		time.Sleep(timeout)
-		activeCmd.Cmd.Process.Kill()
-	}()
+	c.removeActiveCommand(commandID)
 }
 
-// sendCommandResponseGRPC sends a command response to the server via gRPC
-func (c *Client) sendCommandResponseGRPC(stream proto.AgentService_StreamCommandsClient, commandID, output, errorMsg string, isComplete, isError bool) {
-	resp := &proto.CommandMessage{
-		Type:       "command_output",
-		CommandID:  commandID,
-		Output:     output,
-		Error:      errorMsg,
-		IsComplete: isComplete,
-		IsError:    isError,
-	}
-
-	if err := stream.Send(resp); err != nil {
-		logger.Errorf("Failed to send command response: %v", err)
-	}
-}
-
-// sendOutputGRPC sends command output to the server via gRPC
-func (c *Client) sendOutputGRPC(stream proto.AgentService_StreamCommandsClient, commandID, output string, isError bool) {
-	c.sendCommandResponseGRPC(stream, commandID, output, "", false, isError)
-}
-
-// sendErrorGRPC sends an error message to the server via gRPC
-func (c *Client) sendErrorGRPC(stream proto.AgentService_StreamCommandsClient, commandID, errorMsg string) {
-	c.sendCommandResponseGRPC(stream, commandID, errorMsg, errorMsg, true, true)
-}
-
-// sendCompletionGRPC sends a completion message to the server via gRPC
-func (c *Client) sendCompletionGRPC(stream proto.AgentService_StreamCommandsClient, commandID string) {
-	c.sendCommandResponseGRPC(stream, commandID, "", "", true, false)
-}
-
-// isClosedPipeError checks if the error is a closed pipe error
+// isClosedPipeError checks if an error is related to closed pipe/file
 func isClosedPipeError(err error) bool {
 	if err == nil {
 		return false
@@ -482,7 +515,7 @@ func isUTF8(data []byte) bool {
 }
 
 // executePluginCommandGRPC executes a plugin-based command via gRPC
-func (c *Client) executePluginCommandGRPC(stream proto.AgentService_StreamCommandsClient, req CommandRequest, fullCommand string) {
+func (c *Client) executePluginCommandGRPC(stream proto.AgentService_StreamCommandsClient, req CommandRequest, fullCommand string, cmdConfig config.CommandTemplate) {
 	parts := strings.SplitN(fullCommand, " ", 2)
 	if len(parts) < 2 {
 		c.sendErrorGRPC(stream, req.CommandID, "invalid plugin command format")
@@ -493,8 +526,7 @@ func (c *Client) executePluginCommandGRPC(stream proto.AgentService_StreamComman
 	resolvedTarget := parts[1]
 
 	dummyCmd := exec.Command("echo", "plugin_execution")
-
-	c.storeActiveCommand(req.CommandID, dummyCmd, fullCommand)
+	c.storeActiveCommand(req.CommandID, dummyCmd, fullCommand, req.CommandName)
 	defer c.removeActiveCommand(req.CommandID)
 
 	err := plugin.ExecutePluginCommand(pluginName, resolvedTarget, req.CommandID, func(output string, isError bool, isComplete bool) {

@@ -54,7 +54,6 @@ type AgentConfig struct {
 type CommandTemplate struct {
 	Template     string `yaml:"template" json:"template"`
 	UsePlugin    string `yaml:"use_plugin" json:"use_plugin"`
-	Description  string `yaml:"description" json:"description"`
 	IgnoreTarget bool   `yaml:"ignore_target" json:"ignore_target"`
 	MaximumQueue int    `yaml:"maxmium_queue" json:"maxmium_queue"`
 }
@@ -194,7 +193,7 @@ func extractCommandOrderFromText(data string) []string {
 				parts := strings.SplitN(trimmed, ":", 2)
 				if len(parts) > 0 {
 					cmdName := strings.TrimSpace(parts[0])
-					excludedFields := []string{"template", "description", "ignore_target", "maxmium_queue", "use_plugin"}
+					excludedFields := []string{"template", "ignore_target", "maxmium_queue", "use_plugin"}
 
 					if cmdName != "" && !slices.Contains(excludedFields, cmdName) {
 						if !slices.Contains(commands, cmdName) {

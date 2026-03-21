@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"YALS/internal/config"
+	"YALS/internal/plugin"
 	"YALS/internal/proto"
 	"YALS/internal/validator"
 )
@@ -35,6 +36,8 @@ type Agent struct {
 	statusLock        sync.RWMutex
 	availableCommands []config.CommandInfo
 	commandsLock      sync.RWMutex
+	runningCommands   map[string]int
+	runningLock       sync.Mutex
 }
 
 // AgentRegistration contains server-side metadata used when attaching a live stream.
@@ -102,6 +105,9 @@ func (m *Manager) RegisterAgent(reg AgentRegistration, stream proto.AgentService
 		agent.stream = stream
 		agent.lastCheck = time.Now()
 		agent.availableCommands = cloneCommands(reg.Commands)
+		if agent.runningCommands == nil {
+			agent.runningCommands = make(map[string]int)
+		}
 		if stream != nil {
 			agent.status = StatusConnected
 			agent.lastConnected = time.Now()
@@ -122,6 +128,7 @@ func (m *Manager) RegisterAgent(reg AgentRegistration, stream proto.AgentService
 		lastConnected:     now,
 		firstSeen:         now,
 		availableCommands: cloneCommands(reg.Commands),
+		runningCommands:   make(map[string]int),
 	}
 	if stream != nil {
 		agent.status = StatusConnected
@@ -129,6 +136,53 @@ func (m *Manager) RegisterAgent(reg AgentRegistration, stream proto.AgentService
 
 	m.agents[agent.Name] = agent
 	m.agentsByUUID[agent.UUID] = agent
+}
+
+// ReloadAgent requests an online agent to reconnect and fetch fresh config.
+func (m *Manager) ReloadAgent(uuid string) error {
+	m.agentsLock.RLock()
+	agent, exists := m.agentsByUUID[uuid]
+	m.agentsLock.RUnlock()
+	if !exists || agent == nil || agent.stream == nil {
+		return nil
+	}
+	return agent.stream.Send(&proto.CommandMessage{Type: "reload_config"})
+}
+
+// DisconnectAgent forces an online agent to disconnect and removes it from memory.
+func (m *Manager) DisconnectAgent(uuid string) error {
+	m.agentsLock.Lock()
+	agent, exists := m.agentsByUUID[uuid]
+	if !exists {
+		m.agentsLock.Unlock()
+		return nil
+	}
+
+	stream := agent.stream
+	name := agent.Name
+	delete(m.agentsByUUID, uuid)
+	delete(m.agents, name)
+	m.agentsLock.Unlock()
+
+	if stream != nil {
+		_ = stream.Send(&proto.CommandMessage{Type: "disconnect"})
+	}
+
+	return nil
+}
+
+// RemoveAgent removes an agent from in-memory manager state.
+func (m *Manager) RemoveAgent(uuid string) {
+	m.agentsLock.Lock()
+	defer m.agentsLock.Unlock()
+
+	agent, exists := m.agentsByUUID[uuid]
+	if !exists {
+		return
+	}
+
+	delete(m.agentsByUUID, uuid)
+	delete(m.agents, agent.Name)
 }
 
 // RegisterAgentStream attaches an active stream for the specified UUID.
@@ -173,6 +227,57 @@ func (a *Agent) Status() Status {
 	a.statusLock.RLock()
 	defer a.statusLock.RUnlock()
 	return a.status
+}
+
+func (m *Manager) reserveCommandSlot(agentName, commandName string, maximumQueue int, pluginName string) error {
+	if maximumQueue <= 0 && pluginName != "" {
+		if hasOverride, overrideQueue := plugin.GetPluginMaximumQueue(pluginName); hasOverride {
+			maximumQueue = overrideQueue
+		}
+	}
+	if maximumQueue <= 0 {
+		return nil
+	}
+
+	m.agentsLock.RLock()
+	agent, exists := m.agents[agentName]
+	m.agentsLock.RUnlock()
+	if !exists || agent == nil {
+		return fmt.Errorf("agent not found: %s", agentName)
+	}
+
+	agent.runningLock.Lock()
+	defer agent.runningLock.Unlock()
+	if agent.runningCommands == nil {
+		agent.runningCommands = make(map[string]int)
+	}
+	current := agent.runningCommands[commandName]
+	if current >= maximumQueue {
+		return fmt.Errorf("execution limit reached for command '%s' (%d/%d)", commandName, current, maximumQueue)
+	}
+	agent.runningCommands[commandName] = current + 1
+	return nil
+}
+
+func (m *Manager) releaseCommandSlot(agentName, commandName string) {
+	m.agentsLock.RLock()
+	agent, exists := m.agents[agentName]
+	m.agentsLock.RUnlock()
+	if !exists || agent == nil {
+		return
+	}
+
+	agent.runningLock.Lock()
+	defer agent.runningLock.Unlock()
+	if agent.runningCommands == nil {
+		return
+	}
+	current := agent.runningCommands[commandName]
+	if current <= 1 {
+		delete(agent.runningCommands, commandName)
+		return
+	}
+	agent.runningCommands[commandName] = current - 1
 }
 
 // GetAgents returns a list of all agents with their status and details.
@@ -293,7 +398,6 @@ func (m *Manager) buildAgentInfo(name string, agent *Agent) map[string]any {
 			"name":          cmd.Name,
 			"template":      cmd.Template,
 			"use_plugin":    cmd.UsePlugin,
-			"description":   cmd.Description,
 			"ignore_target": cmd.IgnoreTarget,
 			"maxmium_queue": cmd.MaximumQueue,
 		}

@@ -38,12 +38,16 @@ func (m *Manager) ExecuteCommandStreamingWithStopAndID(agentName, command, comma
 	agent, exists := m.agents[agentName]
 	m.agentsLock.RUnlock()
 
-	if !exists {
+	if !exists || agent == nil {
 		return fmt.Errorf("agent not found: %s", agentName)
 	}
 
 	if agent.Status() != StatusConnected {
 		return fmt.Errorf("agent not connected: %s", agentName)
+	}
+
+	if agent.stream == nil {
+		return fmt.Errorf("agent stream unavailable: %s", agentName)
 	}
 
 	commandName, target, err := parseCommand(command)
@@ -69,6 +73,11 @@ func (m *Manager) ExecuteCommandStreamingWithStopAndID(agentName, command, comma
 
 	m.registerOutputHandler(commandID, outputChan)
 	defer m.unregisterOutputHandler(commandID)
+
+	if err := m.reserveCommandSlot(agentName, commandName, cmdConfig.MaximumQueue, cmdConfig.UsePlugin); err != nil {
+		return err
+	}
+	defer m.releaseCommandSlot(agentName, commandName)
 
 	req := &proto.CommandMessage{
 		Type:        "execute_command",

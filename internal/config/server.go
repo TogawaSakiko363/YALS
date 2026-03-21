@@ -5,12 +5,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"YALS/internal/logger"
-
 	"gopkg.in/yaml.v3"
 )
 
-// Config represents the server configuration
+// Config represents the file-based server bootstrap configuration.
 type Config struct {
 	Server struct {
 		Host        string `yaml:"host"`
@@ -21,27 +19,26 @@ type Config struct {
 		TLSKeyFile  string `yaml:"tls_key_file"`
 	} `yaml:"server"`
 
-	GRPC struct {
-		PingInterval int `yaml:"ping_interval"`
-		PongWait     int `yaml:"pong_wait"`
-	} `yaml:"grpc"`
-
-	Connection struct {
-		KeepAlive int `yaml:"keepalive"`
-	} `yaml:"connection"`
-
-	RateLimit struct {
-		Enabled     bool `yaml:"enabled"`
-		MaxCommands int  `yaml:"max_commands"`
-		TimeWindow  int  `yaml:"time_window"`
-	} `yaml:"rate_limit"`
-
 	Database struct {
 		Path string `yaml:"path"`
 	} `yaml:"database"`
 }
 
-// AgentDetails represents additional agent information
+// RuntimeSettings represents hot-reloadable server runtime options.
+type RuntimeSettings struct {
+	GRPC struct {
+		PingInterval int `json:"ping_interval"`
+		PongWait     int `json:"pong_wait"`
+	} `json:"grpc"`
+
+	RateLimit struct {
+		Enabled     bool `json:"enabled"`
+		MaxCommands int  `json:"max_commands"`
+		TimeWindow  int  `json:"time_window"`
+	} `json:"rate_limit"`
+}
+
+// AgentDetails represents additional agent information.
 type AgentDetails struct {
 	Location    string `yaml:"location" json:"location"`
 	Datacenter  string `yaml:"datacenter" json:"datacenter"`
@@ -49,7 +46,7 @@ type AgentDetails struct {
 	Description string `yaml:"description" json:"description"`
 }
 
-// LoadConfig loads configuration from the specified file
+// LoadConfig loads configuration from the specified file.
 func LoadConfig(filename string) (*Config, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
@@ -61,28 +58,47 @@ func LoadConfig(filename string) (*Config, error) {
 		return nil, fmt.Errorf("error parsing config file: %w", err)
 	}
 
-	if config.Connection.KeepAlive < 0 {
-		logger.Warnf("keepalive cannot be negative, setting to 0 (disabled)")
-		config.Connection.KeepAlive = 0
-	}
-
 	if config.Server.LogLevel == "" {
 		config.Server.LogLevel = "info"
 	}
-
 	if config.Database.Path == "" {
 		config.Database.Path = filepath.Clean("./data/yals.db")
 	}
 
 	globalConfig = &config
-
 	return &config, nil
 }
 
-// Global configuration instance
+// DefaultRuntimeSettings returns normalized built-in runtime defaults.
+func (c *Config) DefaultRuntimeSettings() RuntimeSettings {
+	settings := RuntimeSettings{}
+	NormalizeRuntimeSettings(&settings)
+	return settings
+}
+
+// NormalizeRuntimeSettings applies safe defaults and constraints.
+func NormalizeRuntimeSettings(settings *RuntimeSettings) {
+	if settings == nil {
+		return
+	}
+	if settings.GRPC.PingInterval <= 0 {
+		settings.GRPC.PingInterval = 30
+	}
+	if settings.GRPC.PongWait <= 0 {
+		settings.GRPC.PongWait = 60
+	}
+	if settings.RateLimit.MaxCommands <= 0 {
+		settings.RateLimit.MaxCommands = 10
+	}
+	if settings.RateLimit.TimeWindow <= 0 {
+		settings.RateLimit.TimeWindow = 60
+	}
+}
+
+// Global configuration instance.
 var globalConfig *Config
 
-// GetConfig returns the current configuration
+// GetConfig returns the current bootstrap configuration.
 func GetConfig() *Config {
 	return globalConfig
 }

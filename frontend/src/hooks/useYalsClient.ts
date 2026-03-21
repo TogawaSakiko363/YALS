@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Agent, AgentCommand, AgentConfigPayload, AgentConfigRecord, CommandResponse, CommandType, CommandHistory, AgentGroupData, CommandConfig, ControlSessionResponse, IPVersion } from '../types/yals';
+import { Agent, AgentCommand, AgentConfigPayload, AgentConfigRecord, CommandResponse, CommandType, CommandHistory, AgentGroupData, CommandConfig, ControlSessionResponse, IPVersion, RuntimeSettings } from '../types/yals';
 
 interface UseYalsClientOptions {
   serverUrl?: string;
@@ -12,6 +12,18 @@ const getLocalStorage = (key: string): string | null => {
     return localStorage.getItem(key);
   } catch {
     return null;
+  }
+};
+
+const defaultRuntimeSettings: RuntimeSettings = {
+  grpc: {
+    ping_interval: 30,
+    pong_wait: 60
+  },
+  rate_limit: {
+    enabled: true,
+    max_commands: 10,
+    time_window: 60
   }
 };
 
@@ -45,6 +57,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
   const [controlToken, setControlToken] = useState<string | null>(() => sessionStorage.getItem('yals_control_token'));
   const [isControlAuthenticated, setIsControlAuthenticated] = useState<boolean>(() => !!sessionStorage.getItem('yals_control_token'));
   const [managedAgents, setManagedAgents] = useState<AgentConfigRecord[]>([]);
+  const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>(defaultRuntimeSettings);
 
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -55,7 +68,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     reconnectDelay = 1000
   } = options;
 
-  const isControlPage = window.location.pathname === '/control.html';
+  const isControlPage = window.location.pathname === '/control.html' || window.location.pathname === '/control';
   const protocol = window.location.protocol;
 
   const setLocalStorage = useCallback((key: string, value: string) => {
@@ -67,6 +80,16 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
   }, []);
 
   const buildHeaders = useCallback((headers: Record<string, string> = {}): HeadersInit => headers, []);
+
+  const mapAgentCommandsToCommandConfigs = useCallback((agentCommands: AgentCommand[]): CommandConfig[] => {
+    return agentCommands.map((cmd: AgentCommand) => ({
+      name: cmd.name,
+      template: cmd.template || '',
+      use_plugin: cmd.use_plugin,
+      ignore_target: cmd.ignore_target || false,
+      maxmium_queue: cmd.maxmium_queue
+    }));
+  }, []);
 
   const fetchNodesData = useCallback(async (sessionIdParam: string) => {
     const response = await fetch(`${protocol}//${serverUrl}/api/node?session_id=${sessionIdParam}`, {
@@ -105,19 +128,12 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       setSelectedAgent(preferredAgent.name);
       const agentCommands = preferredAgent.commands as AgentCommand[] | undefined;
       if (agentCommands && Array.isArray(agentCommands)) {
-        const commandsList: CommandConfig[] = agentCommands.map((cmd: AgentCommand) => ({
-          name: cmd.name,
-          description: cmd.description || cmd.name,
-          template: cmd.template || '',
-          use_plugin: cmd.use_plugin,
-          ignore_target: cmd.ignore_target || false,
-          maxmium_queue: cmd.maxmium_queue
-        }));
+        const commandsList = mapAgentCommandsToCommandConfigs(agentCommands);
         setCommands(commandsList);
         setLocalStorage('yals_commands', JSON.stringify(commandsList));
       }
     }
-  }, [buildHeaders, protocol, serverUrl, selectedAgent, setLocalStorage]);
+  }, [buildHeaders, protocol, serverUrl, selectedAgent, setLocalStorage, mapAgentCommandsToCommandConfigs]);
 
   const connect = useCallback(() => {
     setIsConnecting(true);
@@ -177,19 +193,12 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       const agent = agents.find((item) => item.name === selectedAgent);
       const agentCommands = agent?.commands as AgentCommand[] | undefined;
       if (agentCommands && Array.isArray(agentCommands)) {
-        const commandsList: CommandConfig[] = agentCommands.map((cmd: AgentCommand) => ({
-          name: cmd.name,
-          description: cmd.description || cmd.name,
-          template: cmd.template || '',
-          use_plugin: cmd.use_plugin,
-          ignore_target: cmd.ignore_target || false,
-          maxmium_queue: cmd.maxmium_queue
-        }));
+        const commandsList = mapAgentCommandsToCommandConfigs(agentCommands);
         setCommands(commandsList);
         setLocalStorage('yals_commands', JSON.stringify(commandsList));
       }
     }
-  }, [agents, selectedAgent, setLocalStorage]);
+  }, [agents, selectedAgent, setLocalStorage, mapAgentCommandsToCommandConfigs]);
 
   const clearAllStreamingOutputs = useCallback(() => {
     setStreamingOutputs(new Map());
@@ -199,10 +208,23 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     const currentSessionId = sessionId || sessionStorage.getItem('yals_session_id');
     if (!currentSessionId) return;
 
+    setActiveCommands((prev) => {
+      const next = new Set(prev);
+      next.delete(commandId);
+      return next;
+    });
+    setAbortControllers((prev) => {
+      const next = new Map(prev);
+      next.delete(commandId);
+      return next;
+    });
+
     await fetch(`${protocol}//${serverUrl}/api/stop?session_id=${currentSessionId}`, {
       method: 'POST',
       headers: buildHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ command_id: commandId })
+    }).catch((error) => {
+      console.error('Failed to stop command:', error);
     });
 
     const controller = abortControllers.get(commandId);
@@ -278,6 +300,16 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
+            setActiveCommands((prev) => {
+              const next = new Set(prev);
+              next.delete(simpleCommandId);
+              return next;
+            });
+            setAbortControllers((prev) => {
+              const next = new Map(prev);
+              next.delete(simpleCommandId);
+              return next;
+            });
             break;
           }
 
@@ -332,6 +364,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
                 } else {
                   reject(new Error(message.error || 'Command execution failed'));
                 }
+                return;
               }
             } catch (error) {
               console.error('Failed to parse SSE message:', error);
@@ -425,6 +458,43 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     return data;
   }, [buildHeaders, controlHeaders, protocol, serverUrl]);
 
+  const fetchRuntimeSettings = useCallback(async () => {
+    const response = await fetch(`${protocol}//${serverUrl}/api/control/runtime`, {
+      method: 'GET',
+      headers: buildHeaders({
+        Accept: 'application/json',
+        ...controlHeaders()
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('获取运行参数失败');
+    }
+
+    const data = await response.json() as RuntimeSettings;
+    setRuntimeSettings(data);
+    return data;
+  }, [buildHeaders, controlHeaders, protocol, serverUrl]);
+
+  const saveRuntimeSettings = useCallback(async (payload: RuntimeSettings) => {
+    const response = await fetch(`${protocol}//${serverUrl}/api/control/runtime`, {
+      method: 'PUT',
+      headers: buildHeaders({
+        'Content-Type': 'application/json',
+        ...controlHeaders()
+      }),
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      throw new Error((await response.text()) || '保存运行参数失败');
+    }
+
+    const data = await response.json() as RuntimeSettings;
+    setRuntimeSettings(data);
+    return data;
+  }, [buildHeaders, controlHeaders, protocol, serverUrl]);
+
   const saveManagedAgent = useCallback(async (payload: AgentConfigPayload) => {
     const isUpdate = !!payload.uuid;
     const url = isUpdate
@@ -464,9 +534,15 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
 
   useEffect(() => {
     if (isControlPage) {
-      validateControlSession().catch(() => setIsControlAuthenticated(false));
+      validateControlSession()
+        .then((ok) => {
+          if (ok) {
+            fetchRuntimeSettings().catch(() => setRuntimeSettings(defaultRuntimeSettings));
+          }
+        })
+        .catch(() => setIsControlAuthenticated(false));
     }
-  }, [isControlPage, validateControlSession]);
+  }, [fetchRuntimeSettings, isControlPage, validateControlSession]);
 
   return {
     isConnected,
@@ -486,9 +562,12 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     stopCommand,
     isControlAuthenticated,
     managedAgents,
+    runtimeSettings,
     loginControl,
     validateControlSession,
     listManagedAgents,
+    fetchRuntimeSettings,
+    saveRuntimeSettings,
     saveManagedAgent,
     deleteManagedAgent
   };

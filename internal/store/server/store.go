@@ -21,7 +21,6 @@ type CommandRecord struct {
 	Name         string `json:"name"`
 	Template     string `json:"template"`
 	UsePlugin    string `json:"use_plugin"`
-	Description  string `json:"description"`
 	IgnoreTarget bool   `json:"ignore_target"`
 	MaximumQueue int    `json:"maxmium_queue"`
 	OrderIndex   int    `json:"order_index"`
@@ -106,6 +105,11 @@ func (s *Store) initSchema() error {
 		`CREATE INDEX IF NOT EXISTS idx_agents_group_name ON agents(group_name);`,
 		`CREATE INDEX IF NOT EXISTS idx_agents_name ON agents(name);`,
 		`ALTER TABLE agents ADD COLUMN token TEXT NOT NULL DEFAULT '';`,
+		`CREATE TABLE IF NOT EXISTS runtime_settings (
+			key TEXT PRIMARY KEY,
+			value_json TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);`,
 	}
 
 	for _, stmt := range statements {
@@ -119,6 +123,57 @@ func (s *Store) initSchema() error {
 	}
 
 	return nil
+}
+
+// UpsertRuntimeSettings saves hot-reloadable runtime settings.
+func (s *Store) UpsertRuntimeSettings(settings config.RuntimeSettings) (*config.RuntimeSettings, error) {
+	config.NormalizeRuntimeSettings(&settings)
+	payload, err := json.Marshal(settings)
+	if err != nil {
+		return nil, fmt.Errorf("marshal runtime settings: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err = s.db.Exec(`
+INSERT INTO runtime_settings (key, value_json, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET
+    value_json = excluded.value_json,
+    updated_at = excluded.updated_at
+`, "server_runtime", string(payload), now)
+	if err != nil {
+		return nil, fmt.Errorf("upsert runtime settings: %w", err)
+	}
+
+	return s.GetRuntimeSettings()
+}
+
+// GetRuntimeSettings loads persisted runtime settings.
+func (s *Store) GetRuntimeSettings() (*config.RuntimeSettings, error) {
+	row := s.db.QueryRow(`SELECT value_json FROM runtime_settings WHERE key = ?`, "server_runtime")
+	var payload string
+	if err := row.Scan(&payload); err != nil {
+		return nil, err
+	}
+
+	var settings config.RuntimeSettings
+	if err := json.Unmarshal([]byte(payload), &settings); err != nil {
+		return nil, fmt.Errorf("unmarshal runtime settings: %w", err)
+	}
+	config.NormalizeRuntimeSettings(&settings)
+	return &settings, nil
+}
+
+// EnsureRuntimeSettings loads persisted settings or stores defaults on first boot.
+func (s *Store) EnsureRuntimeSettings(defaults config.RuntimeSettings) (*config.RuntimeSettings, error) {
+	settings, err := s.GetRuntimeSettings()
+	if err == nil {
+		return settings, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	return s.UpsertRuntimeSettings(defaults)
 }
 
 // UpsertAgent creates or updates an agent configuration record.
@@ -264,7 +319,6 @@ func BuildRuntimeConfig(host string, port int, record AgentRecord, logLevel stri
 		runtimeConfig.Commands[cmd.Name] = config.CommandTemplate{
 			Template:     cmd.Template,
 			UsePlugin:    cmd.UsePlugin,
-			Description:  cmd.Description,
 			IgnoreTarget: cmd.IgnoreTarget,
 			MaximumQueue: cmd.MaximumQueue,
 		}
@@ -280,6 +334,8 @@ func normalizeCommands(commands []CommandRecord) []CommandRecord {
 
 	for index, cmd := range commands {
 		cmd.Name = strings.TrimSpace(cmd.Name)
+		cmd.Template = strings.TrimSpace(cmd.Template)
+		cmd.UsePlugin = strings.TrimSpace(cmd.UsePlugin)
 		if cmd.Name == "" {
 			continue
 		}

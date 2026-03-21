@@ -98,6 +98,30 @@ type ControlSessionResponse struct {
 	Token         string `json:"token,omitempty"`
 }
 
+type RuntimeSettingsResponse struct {
+	GRPC struct {
+		PingInterval int `json:"ping_interval"`
+		PongWait     int `json:"pong_wait"`
+	} `json:"grpc"`
+	RateLimit struct {
+		Enabled     bool `json:"enabled"`
+		MaxCommands int  `json:"max_commands"`
+		TimeWindow  int  `json:"time_window"`
+	} `json:"rate_limit"`
+}
+
+type RuntimeSettingsPayload struct {
+	GRPC struct {
+		PingInterval int `json:"ping_interval"`
+		PongWait     int `json:"pong_wait"`
+	} `json:"grpc"`
+	RateLimit struct {
+		Enabled     bool `json:"enabled"`
+		MaxCommands int  `json:"max_commands"`
+		TimeWindow  int  `json:"time_window"`
+	} `json:"rate_limit"`
+}
+
 type AgentConfigPayload struct {
 	UUID     string                      `json:"uuid,omitempty"`
 	Token    string                      `json:"token"`
@@ -316,6 +340,55 @@ func (h *Handler) handleControlSession(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(ControlSessionResponse{Authenticated: true, Token: token})
 }
 
+func (h *Handler) handleControlRuntime(w http.ResponseWriter, r *http.Request) {
+	if !h.requireControlAuth(w, r) {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		settings := h.GetRuntimeSettings()
+		response := RuntimeSettingsResponse{}
+		response.GRPC.PingInterval = settings.GRPC.PingInterval
+		response.GRPC.PongWait = settings.GRPC.PongWait
+		response.RateLimit.Enabled = settings.RateLimit.Enabled
+		response.RateLimit.MaxCommands = settings.RateLimit.MaxCommands
+		response.RateLimit.TimeWindow = settings.RateLimit.TimeWindow
+		w.Header().Set("Content-Type", "application/json")
+		h.setNoCacheHeaders(w)
+		_ = json.NewEncoder(w).Encode(response)
+	case http.MethodPut:
+		var payload RuntimeSettingsPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		settings := config.RuntimeSettings{}
+		settings.GRPC.PingInterval = payload.GRPC.PingInterval
+		settings.GRPC.PongWait = payload.GRPC.PongWait
+		settings.RateLimit.Enabled = payload.RateLimit.Enabled
+		settings.RateLimit.MaxCommands = payload.RateLimit.MaxCommands
+		settings.RateLimit.TimeWindow = payload.RateLimit.TimeWindow
+		saved, err := h.store.UpsertRuntimeSettings(settings)
+		if err != nil {
+			http.Error(w, "Failed to persist runtime settings", http.StatusInternalServerError)
+			return
+		}
+		h.UpdateRuntimeSettings(*saved)
+		response := RuntimeSettingsResponse{}
+		response.GRPC.PingInterval = saved.GRPC.PingInterval
+		response.GRPC.PongWait = saved.GRPC.PongWait
+		response.RateLimit.Enabled = saved.RateLimit.Enabled
+		response.RateLimit.MaxCommands = saved.RateLimit.MaxCommands
+		response.RateLimit.TimeWindow = saved.RateLimit.TimeWindow
+		w.Header().Set("Content-Type", "application/json")
+		h.setNoCacheHeaders(w)
+		_ = json.NewEncoder(w).Encode(response)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 func (h *Handler) handleControlAgents(w http.ResponseWriter, r *http.Request) {
 	if !h.requireControlAuth(w, r) {
 		return
@@ -395,6 +468,7 @@ func (h *Handler) handleControlCreateAgent(w http.ResponseWriter, r *http.Reques
 	}
 
 	h.syncStoredAgent(*record)
+	_ = h.agentManager.ReloadAgent(record.UUID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(agentRecordToResponse(*record))
@@ -421,6 +495,7 @@ func (h *Handler) handleControlUpdateAgent(w http.ResponseWriter, r *http.Reques
 	}
 
 	h.syncStoredAgent(*record)
+	_ = h.agentManager.ReloadAgent(record.UUID)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(agentRecordToResponse(*record))
 }
@@ -434,6 +509,8 @@ func (h *Handler) handleControlDeleteAgent(w http.ResponseWriter, uuidValue stri
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
+
+	_ = h.agentManager.DisconnectAgent(uuidValue)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
@@ -472,7 +549,8 @@ func (h *Handler) requireControlAuth(w http.ResponseWriter, r *http.Request) boo
 }
 
 func (h *Handler) syncStoredAgent(record serverstore.AgentRecord) {
-	runtimeConfig := serverstore.BuildRuntimeConfig(config.GetConfig().Server.Host, config.GetConfig().Server.Port, record, config.GetConfig().Server.LogLevel)
+	bootstrapCfg := config.GetConfig()
+	runtimeConfig := serverstore.BuildRuntimeConfig(bootstrapCfg.Server.Host, bootstrapCfg.Server.Port, record, bootstrapCfg.Server.LogLevel)
 	h.agentManager.RegisterAgent(agent.AgentRegistration{
 		UUID:     record.UUID,
 		Name:     record.Name,

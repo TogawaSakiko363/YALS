@@ -50,7 +50,6 @@ type CommandInfo struct {
 	Name         string `json:"name"`
 	Template     string `json:"template,omitempty"`
 	UsePlugin    string `json:"use_plugin,omitempty"`
-	Description  string `json:"description,omitempty"`
 	IgnoreTarget bool   `json:"ignore_target"`
 	MaximumQueue int    `json:"maxmium_queue,omitempty"`
 }

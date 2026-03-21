@@ -100,6 +100,12 @@ func (c *Client) ConnectToServer() error {
 			go c.executeCommandGRPC(stream, msg)
 		case "stop_command":
 			c.stopCommand(msg.CommandID)
+		case "disconnect":
+			logger.Infof("Received disconnect request from server")
+			return nil
+		case "reload_config":
+			logger.Infof("Received runtime config reload request from server")
+			return nil
 		default:
 			logger.Warnf("Unknown message type: %s", msg.Type)
 		}

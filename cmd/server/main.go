@@ -56,6 +56,11 @@ func main() {
 		}
 	}()
 
+	runtimeSettings, err := store.EnsureRuntimeSettings(cfg.DefaultRuntimeSettings())
+	if err != nil {
+		logger.Fatalf("Failed to initialize runtime settings: %v", err)
+	}
+
 	if _, err := os.Stat(*webDir); os.IsNotExist(err) {
 		logger.Warnf("Web directory '%s' does not exist", *webDir)
 	} else {
@@ -65,31 +70,7 @@ func main() {
 	agentManager := agent.NewManager()
 	seedStoredAgents(agentManager, store, cfg)
 
-	if cfg.Connection.KeepAlive > 0 {
-		maxOfflineDuration := time.Duration(cfg.Connection.KeepAlive) * time.Second
-		logger.Infof("Offline agent cleanup enabled: delete after %v offline", maxOfflineDuration)
-		go func() {
-			checkInterval := time.Duration(cfg.Connection.KeepAlive) * time.Second
-			if checkInterval < time.Minute {
-				checkInterval = time.Minute
-			}
-
-			ticker := time.NewTicker(checkInterval)
-			defer ticker.Stop()
-			for range ticker.C {
-				cleaned := agentManager.CleanupOfflineAgents(maxOfflineDuration)
-				if cleaned > 0 {
-					logger.Infof("Cleaned up %d offline agents (offline > %v)", cleaned, maxOfflineDuration)
-				}
-			}
-		}()
-	} else {
-		logger.Infof("Offline agent cleanup disabled")
-	}
-
-	pingInterval := time.Duration(cfg.GRPC.PingInterval) * time.Second
-	pongWait := time.Duration(cfg.GRPC.PongWait) * time.Second
-	h := handler.NewHandler(agentManager, store, pingInterval, pongWait)
+	h := handler.NewHandler(agentManager, store, *runtimeSettings)
 
 	certExists := fileExists(cfg.Server.TLSCertFile) && fileExists(cfg.Server.TLSKeyFile)
 	if certExists {
@@ -104,16 +85,7 @@ func main() {
 	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
-	grpcServer := grpc.NewServer(
-		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:    time.Duration(cfg.GRPC.PingInterval) * time.Second,
-			Timeout: time.Duration(cfg.GRPC.PongWait) * time.Second,
-		}),
-		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             5 * time.Second,
-			PermitWithoutStream: true,
-		}),
-	)
+	grpcServer := newGRPCServer(*runtimeSettings)
 
 	h.RegisterGRPCServer(grpcServer)
 	mux := http.NewServeMux()
@@ -144,6 +116,20 @@ func main() {
 
 	grpcServer.GracefulStop()
 	_ = server.Shutdown(context.Background())
+}
+
+func newGRPCServer(settings config.RuntimeSettings) *grpc.Server {
+	config.NormalizeRuntimeSettings(&settings)
+	return grpc.NewServer(
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    time.Duration(settings.GRPC.PingInterval) * time.Second,
+			Timeout: time.Duration(settings.GRPC.PongWait) * time.Second,
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             5 * time.Second,
+			PermitWithoutStream: true,
+		}),
+	)
 }
 
 func setupLogging(level string) {
