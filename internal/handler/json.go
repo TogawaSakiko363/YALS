@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"math/rand"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -167,20 +169,29 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// getRealIP returns the client IP. Proxy headers (X-Real-IP / X-Forwarded-For)
+// are only honored when the operator has explicitly enabled trust_proxy_headers,
+// because otherwise any client can spoof them to forge logs or bypass per-IP
+// rate limiting. Without that flag we fall back to the connection's RemoteAddr.
 func (h *Handler) getRealIP(r *http.Request) string {
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return ip
-	}
-
-	forwarded := r.Header.Get("X-Forwarded-For")
-	if forwarded != "" {
-		if idx := strings.Index(forwarded, ","); idx != -1 {
-			return strings.TrimSpace(forwarded[:idx])
+	if cfg := config.GetConfig(); cfg != nil && cfg.Server.TrustProxyHeaders {
+		if ip := strings.TrimSpace(r.Header.Get("X-Real-IP")); ip != "" {
+			return ip
 		}
-		return strings.TrimSpace(forwarded)
+		forwarded := r.Header.Get("X-Forwarded-For")
+		if forwarded != "" {
+			if idx := strings.Index(forwarded, ","); idx != -1 {
+				return strings.TrimSpace(forwarded[:idx])
+			}
+			return strings.TrimSpace(forwarded)
+		}
 	}
 
-	return r.RemoteAddr
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 func (h *Handler) generateCommandID(command, target, agentName, sessionID string) string {
@@ -232,7 +243,13 @@ func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := SessionResponse{SessionID: h.generateSessionID()}
+	sessionID, err := h.generateSessionID()
+	if err != nil {
+		logger.Errorf("Failed to generate session id: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	response := SessionResponse{SessionID: sessionID}
 	w.Header().Set("Content-Type", "application/json")
 	h.setNoCacheHeaders(w)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -251,18 +268,35 @@ func (h *Handler) setNoCacheHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-XSS-Protection", "1; mode=block")
 }
 
-func GenerateRandomString(length int) string {
+// GenerateRandomString returns a cryptographically secure random string of the
+// given length using the charset [a-z0-9]. Rejection sampling is used so the
+// resulting distribution is uniform (no modulo bias).
+func GenerateRandomString(length int) (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	b := make([]byte, length)
-	for i := range b {
-		b[i] = charset[rng.Intn(len(charset))]
+	// 252 is the largest multiple of len(charset) (36) that fits in a byte;
+	// bytes >= 252 are rejected to keep the distribution uniform.
+	const maxByte = 252
+	result := make([]byte, length)
+	buf := make([]byte, 1)
+	for i := 0; i < length; {
+		if _, err := rand.Read(buf); err != nil {
+			return "", fmt.Errorf("generate random string: %w", err)
+		}
+		if buf[0] >= maxByte {
+			continue
+		}
+		result[i] = charset[buf[0]%byte(len(charset))]
+		i++
 	}
-	return string(b)
+	return string(result), nil
 }
 
-func (h *Handler) generateSessionID() string {
-	return fmt.Sprintf("session_%d_%s", time.Now().UnixMilli(), GenerateRandomString(10))
+func (h *Handler) generateSessionID() (string, error) {
+	suffix, err := GenerateRandomString(10)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("session_%d_%s", time.Now().UnixMilli(), suffix), nil
 }
 
 func (h *Handler) validateSessionID(sessionID string) bool {
@@ -311,12 +345,17 @@ func (h *Handler) handleControlLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := config.GetConfig()
-	if req.Password != cfg.Server.Password {
+	if subtle.ConstantTimeCompare([]byte(req.Password), []byte(cfg.Server.Password)) != 1 {
 		http.Error(w, "Invalid password", http.StatusUnauthorized)
 		return
 	}
 
-	token := GenerateRandomString(32)
+	token, err := GenerateRandomString(32)
+	if err != nil {
+		logger.Errorf("Failed to generate control token: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 	h.controlSessions.Store(token, time.Now().Add(24*time.Hour))
 	w.Header().Set("Content-Type", "application/json")
 	h.setNoCacheHeaders(w)
@@ -452,7 +491,13 @@ func (h *Handler) handleControlCreateAgent(w http.ResponseWriter, r *http.Reques
 
 	payload.UUID = uuid.NewString()
 	if payload.Token == "" {
-		payload.Token = GenerateRandomString(32)
+		generatedToken, err := GenerateRandomString(32)
+		if err != nil {
+			logger.Errorf("Failed to generate agent token: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		payload.Token = generatedToken
 	}
 	record, err := h.store.UpsertAgent(serverstore.AgentUpsertInput{
 		UUID:     payload.UUID,
@@ -521,7 +566,10 @@ func (h *Handler) getControlToken(r *http.Request) string {
 	if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
 		return strings.TrimSpace(authHeader[7:])
 	}
-	return strings.TrimSpace(r.URL.Query().Get("token"))
+	// Tokens are only accepted via the Authorization header. Accepting them from
+	// the URL query string would leak them into access logs, proxy logs, browser
+	// history and Referer headers.
+	return ""
 }
 
 func (h *Handler) validateControlToken(token string) bool {

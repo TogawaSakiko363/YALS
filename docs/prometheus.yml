@@ -1,0 +1,47 @@
+# ---------------------------------------------------------------------------
+# Example Prometheus scrape configuration for YALS NR.
+#
+# YALS exposes every agent's status through a single /metrics endpoint on the
+# server (pull / scrape model). Enable it in the server config.yaml first:
+#
+#   server:
+#     metrics_enabled: true
+#     metrics_token: ""          # optional bearer token (see below)
+#
+# Then drop this job into your prometheus.yml (or merge the scrape_configs entry).
+# ---------------------------------------------------------------------------
+
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+
+scrape_configs:
+  - job_name: "yals"
+    metrics_path: /metrics
+
+    # YALS always serves TLS. The server auto-generates a self-signed
+    # certificate when none is configured, so for a default deployment you must
+    # either skip verification (internal / lab) or pin your own CA.
+    scheme: https
+    tls_config:
+      insecure_skip_verify: true
+      # --- For a real certificate, prefer verifying it instead: ---
+      # insecure_skip_verify: false
+      # ca_file: /etc/prometheus/yals-ca.pem
+      # server_name: yals.example.com
+
+    # Only required when server.metrics_token is set in config.yaml.
+    # Remove this whole block if you left metrics_token empty.
+    authorization:
+      type: Bearer
+      credentials: "REPLACE_WITH_metrics_token"
+
+    static_configs:
+      - targets:
+          # host:port of the YALS server (the unified HTTPS port from config.yaml,
+          # e.g. 8080 in the sample config).
+          - "yals.example.com:8080"
+        labels:
+          # Optional: a friendly name for this YALS deployment. It becomes the
+          # `instance` label on every metric, useful if you run several servers.
+          instance: "yals-primary"

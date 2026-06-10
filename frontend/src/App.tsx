@@ -290,7 +290,6 @@ function App({ config }: AppProps) {
                   <Shield className="w-5 h-5 text-gray-700" />
                   <h2 className="text-lg font-semibold text-gray-900">Control Panel Login</h2>
                 </div>
-                <p className="text-sm text-gray-600 mb-4">Use the value from [`server.password`](config.yaml:7) in [`config.yaml`](config.yaml).</p>
                 <FieldLabel>Control password</FieldLabel>
                 <input
                   type="password"

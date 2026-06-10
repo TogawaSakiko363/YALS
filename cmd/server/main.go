@@ -21,8 +21,6 @@ import (
 	"YALS/internal/tls"
 	"YALS/internal/utils"
 
-	_ "YALS/internal/plugin/server"
-
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )

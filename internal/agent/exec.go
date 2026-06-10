@@ -90,6 +90,17 @@ func (c *Client) prepareCommand(req CommandRequest) (string, *exec.Cmd, config.C
 		return "", nil, config.CommandTemplate{}, fmt.Errorf("command configuration not found: %s", req.CommandName)
 	}
 
+	// Defense in depth: the server is expected to validate the target, but the
+	// agent must not trust that blindly. When a target is actually used it must
+	// be a well-formed IP address or domain, never something that could smuggle
+	// shell metacharacters into the command line.
+	if req.Target != "" && !cmdConfig.IgnoreTarget {
+		if validator.ValidateInput(req.Target) == validator.InvalidInput {
+			logger.Warnf("SECURITY: Rejected invalid target for command '%s'", req.CommandName)
+			return "", nil, config.CommandTemplate{}, fmt.Errorf("invalid target")
+		}
+	}
+
 	resolvedTarget := req.Target
 	if req.Target != "" && !cmdConfig.IgnoreTarget {
 		resolvedTarget = c.resolveTargetIfNeeded(req.Target, req.IPVersion)

@@ -45,8 +45,8 @@ func (rl *RateLimiter) Update(settings config.RuntimeSettings) {
 	}
 }
 
-// checkRateLimit checks if a session has exceeded the rate limit
-func (rl *RateLimiter) checkRateLimit(sessionID string) bool {
+// checkRateLimit checks if the given key (client IP) has exceeded the rate limit
+func (rl *RateLimiter) checkRateLimit(key string) bool {
 	if !rl.enabled {
 		return true
 	}
@@ -56,13 +56,13 @@ func (rl *RateLimiter) checkRateLimit(sessionID string) bool {
 
 	now := time.Now()
 
-	if _, exists := rl.sessions[sessionID]; !exists {
-		rl.sessions[sessionID] = &SessionRateLimit{
+	if _, exists := rl.sessions[key]; !exists {
+		rl.sessions[key] = &SessionRateLimit{
 			timestamps: []time.Time{},
 		}
 	}
 
-	session := rl.sessions[sessionID]
+	session := rl.sessions[key]
 
 	validTimestamps := []time.Time{}
 	for _, ts := range session.timestamps {
@@ -80,8 +80,8 @@ func (rl *RateLimiter) checkRateLimit(sessionID string) bool {
 	return true
 }
 
-// getRemainingTime returns the time until the rate limit resets
-func (rl *RateLimiter) getRemainingTime(sessionID string) time.Duration {
+// getRemainingTime returns the time until the rate limit resets for the key
+func (rl *RateLimiter) getRemainingTime(key string) time.Duration {
 	if !rl.enabled {
 		return 0
 	}
@@ -89,7 +89,7 @@ func (rl *RateLimiter) getRemainingTime(sessionID string) time.Duration {
 	rl.mu.RLock()
 	defer rl.mu.RUnlock()
 
-	session, exists := rl.sessions[sessionID]
+	session, exists := rl.sessions[key]
 	if !exists || len(session.timestamps) == 0 {
 		return 0
 	}

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -86,7 +87,7 @@ func (h *Handler) Handshake(ctx context.Context, req *proto.HandshakeRequest) (*
 		logger.Warnf("Unauthorized agent connection attempt for uuid: %s", req.UUID)
 		return nil, status.Errorf(codes.Unauthenticated, "unknown agent uuid")
 	}
-	if strings.TrimSpace(record.Token) != strings.TrimSpace(req.Token) {
+	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(record.Token)), []byte(strings.TrimSpace(req.Token))) != 1 {
 		logger.Warnf("Invalid token for agent uuid: %s", req.UUID)
 		return nil, status.Errorf(codes.Unauthenticated, "invalid agent token")
 	}
@@ -129,7 +130,7 @@ func (h *Handler) StreamCommands(stream proto.AgentService_StreamCommandsServer)
 	uuidValue := uuids[0]
 	agentInfo, err := h.agentManager.RegisterAgentStream(uuidValue, stream)
 	if err != nil {
-		return status.Errorf(codes.NotFound, err.Error())
+		return status.Error(codes.NotFound, err.Error())
 	}
 	defer h.agentManager.UnregisterAgentStream(uuidValue)
 
@@ -159,6 +160,7 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux, webDir string) {
 	mux.HandleFunc("/api/control/agents", h.handleControlAgents)
 	mux.HandleFunc("/api/control/agents/", h.handleControlAgentByUUID)
 	mux.HandleFunc("/api/control/runtime", h.handleControlRuntime)
+	mux.HandleFunc("/metrics", h.handleMetrics)
 
 	fs := http.FileServer(http.Dir(webDir))
 	mux.Handle("/assets/", fs)

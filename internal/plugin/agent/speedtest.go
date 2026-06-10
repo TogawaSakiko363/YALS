@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
-	"strings"
 	"sync"
 	"time"
 )
@@ -34,6 +33,22 @@ type RateLimiter struct {
 	requests map[string][]time.Time
 	mutex    sync.RWMutex
 }
+
+const (
+	// httpDownloadPort is the fixed port for the shared HTTP download test
+	// server. A single server is started lazily and reused across every
+	// speed-test invocation.
+	httpDownloadPort = 8081
+
+	// maxDownloadBytes caps a single HTTP download test payload; downloadChunkSize
+	// is the per-write chunk size for the streamed response.
+	maxDownloadBytes  = 128 * 1024 * 1024
+	downloadChunkSize = 1024 * 1024
+
+	// rateLimitWindow and maxRequestsPerWindow bound HTTP download tests per IP.
+	rateLimitWindow      = 10 * time.Minute
+	maxRequestsPerWindow = 2
+)
 
 var speedTestInstance *SpeedTestPlugin
 var speedTestOnce sync.Once
@@ -94,8 +109,10 @@ func (p *SpeedTestPlugin) ExecuteStreaming(target string, callback plugin.Stream
 
 // ExecuteStreamingWithID runs the speed test with command ID
 func (p *SpeedTestPlugin) ExecuteStreamingWithID(target, commandID string, callback plugin.StreamingCallback) error {
-	// Start HTTP server if not already started
-	p.startHTTPServer()
+	// Start (or reuse) the shared HTTP download server. A bind failure is
+	// reported to the user but does not abort the iperf3 test, which is
+	// independent; the next invocation will retry the bind.
+	httpErr := p.startHTTPServer()
 
 	// Allocate port for iperf3
 	port := p.portManager.AllocatePort()
@@ -110,8 +127,13 @@ func (p *SpeedTestPlugin) ExecuteStreamingWithID(target, commandID string, callb
 	output += fmt.Sprintf("iperf3 -c %s -p %d -R           # TCP upload\n", testIP, port)
 	output += fmt.Sprintf("iperf3 -c %s -p %d -u -b 100M   # UDP test\n\n", testIP, port)
 	output += "WARNING: iperf3 server will shutdown after 120 seconds if no connections\n\n"
-	output += fmt.Sprintf("HTTP download test will be available at http://%s:8081/download\n\n", testIP)
-	output += "NOTE: HTTP test will be limited to 128MB per download, and you can only perform 2 tests per IP within 10 minutes\n"
+	if httpErr != nil {
+		output += fmt.Sprintf("NOTE: HTTP download test is currently unavailable: %v\n", httpErr)
+	} else {
+		output += fmt.Sprintf("HTTP download test will be available at http://%s:%d/download\n\n", testIP, httpDownloadPort)
+		output += fmt.Sprintf("NOTE: HTTP test will be limited to %dMB per download, and you can only perform %d tests per IP within %d minutes\n",
+			maxDownloadBytes/(1024*1024), maxRequestsPerWindow, int(rateLimitWindow.Minutes()))
+	}
 
 	callback(output, false, false)
 
@@ -169,31 +191,71 @@ func (pm *PortManager) ReleasePort(port int) {
 	delete(pm.usedPorts, port)
 }
 
-// startHTTPServer starts the HTTP download server
-func (p *SpeedTestPlugin) startHTTPServer() {
+// startHTTPServer starts the shared HTTP download server if it is not already
+// running. The listener is bound synchronously so that:
+//   - a bind failure is surfaced to the caller instead of being swallowed inside
+//     a goroutine;
+//   - the "server is available" message is only emitted once the port is
+//     actually accepting connections (no optimistic readiness);
+//   - a failed attempt leaves httpStarted false, so the next invocation retries
+//     instead of being permanently broken.
+//
+// On success the single server is reused for the lifetime of the agent process.
+func (p *SpeedTestPlugin) startHTTPServer() error {
 	p.httpMutex.Lock()
 	defer p.httpMutex.Unlock()
 
 	if p.httpStarted {
-		return
+		return nil
+	}
+
+	addr := fmt.Sprintf(":%d", httpDownloadPort)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to start HTTP download server on %s: %w", addr, err)
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/download", p.handleDownload)
-
-	p.httpServer = &http.Server{
-		Addr:    ":8081",
-		Handler: mux,
-	}
+	p.httpServer = &http.Server{Handler: mux}
 
 	go func() {
-		if err := p.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			// Log error but don't crash
+		if err := p.httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+			// Log error but don't crash; the listener is already bound so this
+			// only fires on an unexpected runtime failure of an active server.
 			fmt.Printf("HTTP server error: %v\n", err)
 		}
 	}()
 
 	p.httpStarted = true
+	return nil
+}
+
+// downloadPayload is a single random buffer reused as the speed-test payload
+// across all requests. It is read-only after initialization, so concurrent
+// downloads can share it without locking.
+var (
+	downloadPayload     []byte
+	downloadPayloadOnce sync.Once
+)
+
+// getDownloadPayload lazily generates the shared download payload exactly once.
+// A single CSPRNG fill keeps each 1MB block incompressible; reusing that block
+// across chunks is safe against gzip (its 32KB window cannot span the 1MB repeat
+// period), so throughput measurements stay accurate while the per-chunk CSPRNG
+// cost — which previously dominated download CPU — is eliminated.
+func getDownloadPayload() []byte {
+	downloadPayloadOnce.Do(func() {
+		downloadPayload = make([]byte, downloadChunkSize)
+		if _, err := rand.Read(downloadPayload); err != nil {
+			// Extremely unlikely; fall back to a non-zero pattern so the payload
+			// is never all-zero (which would be trivially compressible).
+			for i := range downloadPayload {
+				downloadPayload[i] = byte(i*31 + 7)
+			}
+		}
+	})
+	return downloadPayload
 }
 
 // handleDownload handles HTTP download requests
@@ -212,19 +274,13 @@ func (p *SpeedTestPlugin) handleDownload(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Disposition", "attachment; filename=speedtest.bin")
 	w.Header().Set("Cache-Control", "no-cache")
 
-	// Generate and send 128MB of random data
-	const maxSize = 128 * 1024 * 1024 // 128MB
-	const chunkSize = 1024 * 1024     // 1MB chunks
-
-	buffer := make([]byte, chunkSize)
+	// Stream a reusable, pre-generated incompressible payload. Reusing one buffer
+	// avoids re-running the CSPRNG for every chunk of every request.
+	payload := getDownloadPayload()
 	sent := 0
 
-	for sent < maxSize {
-		// Generate random data
-		rand.Read(buffer)
-
-		// Write chunk
-		n, err := w.Write(buffer)
+	for sent < maxDownloadBytes {
+		n, err := w.Write(payload)
 		if err != nil {
 			return
 		}
@@ -244,7 +300,7 @@ func (rl *RateLimiter) AllowRequest(ip string) bool {
 	defer rl.mutex.Unlock()
 
 	now := time.Now()
-	cutoff := now.Add(-10 * time.Minute)
+	cutoff := now.Add(-rateLimitWindow)
 
 	// Clean old requests
 	if requests, exists := rl.requests[ip]; exists {
@@ -258,7 +314,7 @@ func (rl *RateLimiter) AllowRequest(ip string) bool {
 	}
 
 	// Check limit
-	if len(rl.requests[ip]) >= 2 {
+	if len(rl.requests[ip]) >= maxRequestsPerWindow {
 		return false
 	}
 
@@ -267,21 +323,15 @@ func (rl *RateLimiter) AllowRequest(ip string) bool {
 	return true
 }
 
-// getClientIP extracts the client IP from the request
+// getClientIP extracts the client IP from the request. The speed-test HTTP
+// server is connected to directly by clients, so the proxy headers
+// (X-Forwarded-For / X-Real-IP) are attacker-controlled and must not be trusted
+// for rate-limiting decisions — only the real connection address is reliable.
 func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		ips := strings.Split(xff, ",")
-		return strings.TrimSpace(ips[0])
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
 	}
-
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Use remote address
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	return ip
 }
 

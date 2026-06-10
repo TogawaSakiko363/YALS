@@ -3,6 +3,7 @@ package proto
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 
@@ -175,7 +176,13 @@ func ValidateToken(ctx context.Context, expectedToken string) error {
 		return status.Errorf(codes.Unauthenticated, "missing token")
 	}
 
-	if tokens[0] != expectedToken {
+	// Reject when there is no expected token (e.g. unknown agent): an empty
+	// expected value must never authenticate an empty supplied token.
+	if expectedToken == "" {
+		return status.Errorf(codes.Unauthenticated, "invalid token")
+	}
+
+	if subtle.ConstantTimeCompare([]byte(tokens[0]), []byte(expectedToken)) != 1 {
 		return status.Errorf(codes.Unauthenticated, "invalid token")
 	}
 

@@ -44,8 +44,11 @@ func (h *Handler) handleExecCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.rateLimiter.checkRateLimit(sessionID) {
-		remaining := h.rateLimiter.getRemainingTime(sessionID)
+	// Rate limit on the real client IP rather than the session id: sessions are
+	// unauthenticated and can be minted freely via /api/session, so a session
+	// key would be trivially bypassable.
+	if !h.rateLimiter.checkRateLimit(clientIP) {
+		remaining := h.rateLimiter.getRemainingTime(clientIP)
 		errorMsg := fmt.Sprintf("Rate limit exceeded. Please wait %d seconds before trying again.", int(remaining.Seconds())+1)
 		h.sendSSEError(w, flusher, errorMsg)
 		logger.Warnf("Client [%s] rate limit exceeded for session: %s", clientIP, sessionID)

@@ -1,0 +1,18 @@
+# Grafana data source provisioning for YALS NR.
+# Place this file at: /etc/grafana/provisioning/datasources/yals.yml
+# (adjust the URL / token to your environment, then restart Grafana).
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus-yals
+    type: prometheus
+    access: proxy
+    # URL of YOUR Prometheus server (NOT the YALS server). Prometheus scrapes
+    # YALS; Grafana queries Prometheus.
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: "30s"

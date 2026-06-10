@@ -363,6 +363,55 @@ func (m *Manager) GetAgentStats() map[string]any {
 	}
 }
 
+// AgentMetric is a raw, structured snapshot of a single agent's state intended
+// for metrics export (unlike buildAgentInfo, which formats values for the UI).
+type AgentMetric struct {
+	UUID            string
+	Name            string
+	Group           string
+	Location        string
+	Datacenter      string
+	Online          bool
+	FirstSeen       time.Time
+	LastConnected   time.Time
+	CommandCount    int
+	RunningCommands int
+}
+
+// GetAgentMetrics returns a raw snapshot of every agent for metrics export.
+func (m *Manager) GetAgentMetrics() []AgentMetric {
+	m.agentsLock.RLock()
+	defer m.agentsLock.RUnlock()
+
+	metrics := make([]AgentMetric, 0, len(m.agents))
+	for _, agent := range m.agents {
+		agent.commandsLock.RLock()
+		commandCount := len(agent.availableCommands)
+		agent.commandsLock.RUnlock()
+
+		agent.runningLock.Lock()
+		running := 0
+		for _, count := range agent.runningCommands {
+			running += count
+		}
+		agent.runningLock.Unlock()
+
+		metrics = append(metrics, AgentMetric{
+			UUID:            agent.UUID,
+			Name:            agent.Name,
+			Group:           agent.Group,
+			Location:        agent.Details.Location,
+			Datacenter:      agent.Details.Datacenter,
+			Online:          agent.Status() == StatusConnected,
+			FirstSeen:       agent.firstSeen,
+			LastConnected:   agent.lastConnected,
+			CommandCount:    commandCount,
+			RunningCommands: running,
+		})
+	}
+	return metrics
+}
+
 // CleanupOfflineAgents removes agents that have been offline for more than the specified duration.
 func (m *Manager) CleanupOfflineAgents(maxOfflineDuration time.Duration) int {
 	m.agentsLock.Lock()
