@@ -44,8 +44,8 @@ func (h *Handler) handleExecCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rate limit on the real client IP rather than the session id: sessions are
-	// unauthenticated and can be minted freely via /api/session, so a session
+	// Rate limit on the real client IP rather than the session id: the session id
+	// is a client-generated correlation token (not authentication), so a session
 	// key would be trivially bypassable.
 	if !h.rateLimiter.checkRateLimit(clientIP) {
 		remaining := h.rateLimiter.getRemainingTime(clientIP)

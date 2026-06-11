@@ -24,8 +24,7 @@ export const useCustomConfig = () => {
   useEffect(() => {
     const loadConfig = async () => {
       try {
-        const basePath = window.location.pathname.startsWith('/control.html') ? '/custom/config.json' : '/custom/config.json';
-        const response = await fetch(basePath);
+        const response = await fetch('/custom/config.json');
 
         if (!response.ok) {
           throw new Error(`Failed to load custom config: ${response.status}`);

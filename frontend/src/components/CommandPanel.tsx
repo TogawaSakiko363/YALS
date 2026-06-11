@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { Play, Loader2 } from 'lucide-react';
 import { CommandType, CommandConfig, IPVersion } from '../types/yals';
 import { AnsiTerminal } from './AnsiTerminal';
+import { getErrorMessage } from '../utils/error';
 
 interface CommandPanelProps {
   selectedAgent: string | null;
@@ -18,7 +19,6 @@ interface CommandPanelProps {
 interface CommandOption {
   value: CommandType;
   label: string;
-  description: string;
   ignore_target: boolean;
 }
 
@@ -42,37 +42,43 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
     (commands || []).map((config) => ({
       value: config.name as CommandType,
       label: config.name.toUpperCase(),
-      description: config.description,
       ignore_target: config.ignore_target || false
     })), [commands]);
 
-  useEffect(() => {
-    if (commandOptions.length > 0 && (!selectedCommand || !commandOptions.find(cmd => cmd.value === selectedCommand))) {
-      setSelectedCommand(commandOptions[0].value);
+  // Derive the effective command instead of "fixing up" selectedCommand inside
+  // an effect: when the available commands change (e.g. switching agent) and the
+  // current selection is no longer valid, fall back to the first option. The
+  // selectedCommand state still holds the user's explicit choice.
+  const effectiveCommand = useMemo<CommandType | undefined>(() => {
+    if (commandOptions.some(cmd => cmd.value === selectedCommand)) {
+      return selectedCommand;
     }
+    return commandOptions[0]?.value;
   }, [commandOptions, selectedCommand]);
 
   const hasCommands = commandOptions.length > 0;
 
   const handleExecute = useCallback(async () => {
-    const currentCommand = commandOptions.find(cmd => cmd.value === selectedCommand);
+    if (!effectiveCommand) return;
+    const currentCommand = commandOptions.find(cmd => cmd.value === effectiveCommand);
     const requiresTarget = !currentCommand?.ignore_target;
-    
+
     if (requiresTarget && !target.trim()) return;
     if (!selectedAgent || !isConnected) return;
 
     setQueueLimitError(null); // Clear previous error
-    
+
     try {
-      await onExecuteCommand(selectedCommand, requiresTarget ? target.trim() : '', ipVersion);
-    } catch (error: any) {
+      await onExecuteCommand(effectiveCommand, requiresTarget ? target.trim() : '', ipVersion);
+    } catch (error: unknown) {
       console.error('Command execution failed:', error);
       // Check if it's a queue limit error
-      if (error.message && error.message.includes('execution limit')) {
-        setQueueLimitError(error.message);
+      const message = getErrorMessage(error);
+      if (message.includes('execution limit')) {
+        setQueueLimitError(message);
       }
     }
-  }, [commandOptions, selectedCommand, target, ipVersion, selectedAgent, isConnected, onExecuteCommand]);
+  }, [commandOptions, effectiveCommand, target, ipVersion, selectedAgent, isConnected, onExecuteCommand]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -82,16 +88,16 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
   }, [handleExecute]);
 
   // Get current command configuration - memoized
-  const currentCommand = useMemo(() => 
-    commandOptions.find(cmd => cmd.value === selectedCommand), 
-    [commandOptions, selectedCommand]
+  const currentCommand = useMemo(() =>
+    commandOptions.find(cmd => cmd.value === effectiveCommand),
+    [commandOptions, effectiveCommand]
   );
   const requiresTarget = !currentCommand?.ignore_target;
-  
+
   const commandId = useMemo(() => {
     const sessionId = sessionStorage.getItem('yals_session_id') || '';
-    return `${selectedCommand}-${requiresTarget ? target.trim() : ''}-${selectedAgent}-${sessionId}`;
-  }, [selectedCommand, requiresTarget, target, selectedAgent]);
+    return `${effectiveCommand ?? ''}-${requiresTarget ? target.trim() : ''}-${selectedAgent}-${sessionId}`;
+  }, [effectiveCommand, requiresTarget, target, selectedAgent]);
   
   const isCommandActive = useMemo(() => 
     activeCommands.has(commandId),
@@ -137,7 +143,7 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
                   {/* Command selection dropdown */}
                   <div className="command-select-container">
                     <select
-                      value={selectedCommand}
+                      value={effectiveCommand ?? ''}
                       onChange={(e) => setSelectedCommand(e.target.value as CommandType)}
                       className="command-select"
                       disabled={!isConnected || !selectedAgent || isCommandActive}

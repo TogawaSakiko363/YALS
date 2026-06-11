@@ -29,7 +29,6 @@ interface AgentItemProps {
   isOnline: boolean;
   disabled?: boolean;
   onToggle: () => void;
-  onSelect: () => void;
 }
 
 const AgentItem: React.FC<AgentItemProps> = React.memo(({
@@ -180,7 +179,6 @@ export const AgentSelector: React.FC<AgentSelectorProps> = React.memo(({
               isOnline={true}
               disabled={disabled}
               onToggle={() => handleAgentToggle(agent)}
-              onSelect={() => onSelectAgent(agent.name)}
             />
           ))}
 
@@ -202,7 +200,6 @@ export const AgentSelector: React.FC<AgentSelectorProps> = React.memo(({
                       setExpandedAgent(expandedAgent === agent.name ? null : agent.name);
                     }
                   }}
-                  onSelect={() => onSelectAgent(agent.name)}
                 />
               ))}
             </>

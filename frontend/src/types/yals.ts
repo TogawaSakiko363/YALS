@@ -117,3 +117,12 @@ export interface AgentConfigRecord extends AgentConfigPayload {
 }
 
 export type IPVersion = 'auto' | 'ipv4' | 'ipv6';
+
+export interface PluginInfo {
+  name: string;
+  description: string;
+  ignore_target: boolean;
+  ignore_target_overridden: boolean;
+  maximum_queue: number;
+  maximum_queue_overridden: boolean;
+}

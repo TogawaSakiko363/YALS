@@ -17,6 +17,9 @@ interface ParsedSegment {
   style: AnsiStyle;
 }
 
+// The ESC (\x1b) control character is intrinsic to ANSI escape sequences, so the
+// no-control-regex rule does not apply here.
+// eslint-disable-next-line no-control-regex
 const ANSI_REGEX = /\x1b\[([0-9;]*?)m/g;
 
 const ANSI_CODES: Record<number, (style: AnsiStyle) => void> = {
@@ -78,7 +81,7 @@ const ANSI_CODES: Record<number, (style: AnsiStyle) => void> = {
 export function parseAnsiText(text: string): ParsedSegment[] {
   const segments: ParsedSegment[] = [];
   let lastIndex = 0;
-  let currentStyle: AnsiStyle = {};
+  const currentStyle: AnsiStyle = {};
 
   let match;
   while ((match = ANSI_REGEX.exec(text)) !== null) {
@@ -123,30 +126,4 @@ export function getStyleClasses(style: AnsiStyle): string[] {
   if (style.background) classes.push(`ansi-bg-${style.background}`);
 
   return classes;
-}
-
-export function renderAnsiToHtml(text: string): string {
-  const segments = parseAnsiText(text);
-  
-  return segments.map(segment => {
-    if (!segment.text) return '';
-    
-    const classes = getStyleClasses(segment.style);
-    if (classes.length === 0) {
-      return segment.text;
-    }
-    
-    return `<span class="${classes.join(' ')}">${escapeHtml(segment.text)}</span>`;
-  }).join('');
-}
-
-function escapeHtml(text: string): string {
-  const map: Record<string, string> = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#039;'
-  };
-  return text.replace(/[&<>"']/g, char => map[char]);
 }

@@ -116,9 +116,19 @@ func (c *Client) prepareCommand(req CommandRequest) (string, *exec.Cmd, config.C
 		return "", nil, config.CommandTemplate{}, fmt.Errorf("command template not found: %s", req.CommandName)
 	}
 
+	// Target placement: if the template contains the {target} placeholder, the
+	// (already validated) target is substituted in place; otherwise it is appended
+	// at the end (legacy behavior). When the command ignores the target, the
+	// effective target is empty so the placeholder never leaks literally.
+	effectiveTarget := ""
+	if !cmdConfig.IgnoreTarget {
+		effectiveTarget = resolvedTarget
+	}
 	fullCommand := template
-	if resolvedTarget != "" && !cmdConfig.IgnoreTarget {
-		fullCommand = template + " " + resolvedTarget
+	if strings.Contains(template, targetPlaceholder) {
+		fullCommand = strings.ReplaceAll(template, targetPlaceholder, effectiveTarget)
+	} else if effectiveTarget != "" {
+		fullCommand = template + " " + effectiveTarget
 	}
 
 	cmd := c.createCommand(fullCommand)

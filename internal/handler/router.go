@@ -65,6 +65,12 @@ func (h *Handler) GetRuntimeSettings() config.RuntimeSettings {
 }
 
 // UpdateRuntimeSettings replaces runtime settings and updates dependent components.
+//
+// Only the rate limiter is reconfigured live. The gRPC keepalive parameters
+// (settings.GRPC) are baked into the grpc.Server at process start (see
+// newGRPCServer) and cannot be changed on a running server, so they are
+// persisted here but only take effect on the next restart. The control UI
+// surfaces this distinction to the operator.
 func (h *Handler) UpdateRuntimeSettings(settings config.RuntimeSettings) {
 	config.NormalizeRuntimeSettings(&settings)
 	h.runtimeMu.Lock()
@@ -151,7 +157,6 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux, webDir string) {
 	h.webDir = webDir
 
 	mux.HandleFunc("/", h.handleIndex)
-	mux.HandleFunc("/api/session", h.handleGetSession)
 	mux.HandleFunc("/api/node", h.handleGetNodes)
 	mux.HandleFunc("/api/exec", h.handleExecCommand)
 	mux.HandleFunc("/api/stop", h.handleStopCommand)
@@ -160,6 +165,7 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux, webDir string) {
 	mux.HandleFunc("/api/control/agents", h.handleControlAgents)
 	mux.HandleFunc("/api/control/agents/", h.handleControlAgentByUUID)
 	mux.HandleFunc("/api/control/runtime", h.handleControlRuntime)
+	mux.HandleFunc("/api/control/plugins", h.handleControlPlugins)
 	mux.HandleFunc("/metrics", h.handleMetrics)
 
 	fs := http.FileServer(http.Dir(webDir))

@@ -9,12 +9,15 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"YALS/internal/agent"
 	"YALS/internal/config"
 	"YALS/internal/logger"
+	"YALS/internal/plugin"
 	serverstore "YALS/internal/store/server"
 	"YALS/internal/utils"
 	"YALS/internal/validator"
@@ -66,10 +69,6 @@ type AppVersion struct {
 	Type    string            `json:"type"`
 	Version string            `json:"version"`
 	Config  map[string]string `json:"config"`
-}
-
-type SessionResponse struct {
-	SessionID string `json:"session_id"`
 }
 
 type NodesResponse struct {
@@ -194,6 +193,12 @@ func (h *Handler) getRealIP(r *http.Request) string {
 	return host
 }
 
+// generateCommandID builds the stable identifier for one command execution. The
+// per-client sessionID is part of the key on purpose: the same command+target on
+// the same agent, issued from different clients (browser tabs), must map to
+// distinct ids. That is what lets /api/stop abort exactly the one running
+// execution the caller means, instead of every client's matching command — the
+// problem that motivated introducing the session id in the first place.
 func (h *Handler) generateCommandID(command, target, agentName, sessionID string) string {
 	return fmt.Sprintf("%s-%s-%s-%s", command, target, agentName, sessionID)
 }
@@ -237,27 +242,6 @@ func (h *Handler) getCommandConfig(agentName, commandName string) (config.Comman
 	return config.CommandInfo{}, false
 }
 
-func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	sessionID, err := h.generateSessionID()
-	if err != nil {
-		logger.Errorf("Failed to generate session id: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	response := SessionResponse{SessionID: sessionID}
-	w.Header().Set("Content-Type", "application/json")
-	h.setNoCacheHeaders(w)
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		logger.Errorf("Failed to encode session response: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-	}
-}
-
 func (h *Handler) setNoCacheHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
@@ -291,16 +275,15 @@ func GenerateRandomString(length int) (string, error) {
 	return string(result), nil
 }
 
-func (h *Handler) generateSessionID() (string, error) {
-	suffix, err := GenerateRandomString(10)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("session_%d_%s", time.Now().UnixMilli(), suffix), nil
-}
+// sessionIDPattern bounds the client-generated session id to a safe shape. The
+// session id is purely a client-side correlation token (it is woven into command
+// ids and server logs), so the server validates its shape — length-bounded and
+// restricted to an unambiguous charset — rather than trusting it blindly. It is
+// no longer issued by the server; clients generate it themselves.
+var sessionIDPattern = regexp.MustCompile(`^session_[A-Za-z0-9_-]{8,128}$`)
 
 func (h *Handler) validateSessionID(sessionID string) bool {
-	return sessionID != "" && strings.HasPrefix(sessionID, "session_")
+	return sessionIDPattern.MatchString(sessionID)
 }
 
 func (h *Handler) handleGetNodes(w http.ResponseWriter, r *http.Request) {
@@ -428,6 +411,50 @@ func (h *Handler) handleControlRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// PluginInfo describes a built-in agent plugin and whether it forces (overrides)
+// the ignore_target / maximum_queue settings, so the control UI can present
+// those fields correctly instead of letting the operator set values the agent
+// would silently ignore.
+type PluginInfo struct {
+	Name                   string `json:"name"`
+	Description            string `json:"description"`
+	IgnoreTarget           bool   `json:"ignore_target"`
+	IgnoreTargetOverridden bool   `json:"ignore_target_overridden"`
+	MaximumQueue           int    `json:"maximum_queue"`
+	MaximumQueueOverridden bool   `json:"maximum_queue_overridden"`
+}
+
+func (h *Handler) handleControlPlugins(w http.ResponseWriter, r *http.Request) {
+	if !h.requireControlAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	names := plugin.GetManager().ListPlugins()
+	sort.Strings(names)
+
+	infos := make([]PluginInfo, 0, len(names))
+	for _, name := range names {
+		ignoreOverridden, ignoreTarget := plugin.GetPluginIgnoreTarget(name)
+		queueOverridden, maximumQueue := plugin.GetPluginMaximumQueue(name)
+		infos = append(infos, PluginInfo{
+			Name:                   name,
+			Description:            plugin.GetPluginDescription(name),
+			IgnoreTarget:           ignoreTarget,
+			IgnoreTargetOverridden: ignoreOverridden,
+			MaximumQueue:           maximumQueue,
+			MaximumQueueOverridden: queueOverridden,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	h.setNoCacheHeaders(w)
+	_ = json.NewEncoder(w).Encode(infos)
+}
+
 func (h *Handler) handleControlAgents(w http.ResponseWriter, r *http.Request) {
 	if !h.requireControlAuth(w, r) {
 		return
@@ -482,10 +509,53 @@ func (h *Handler) handleControlListAgents(w http.ResponseWriter) {
 	_ = json.NewEncoder(w).Encode(response)
 }
 
+// validateAgentPayload checks an agent create/update payload before it reaches
+// the store, so the operator gets a precise error instead of the store silently
+// normalizing away empty or duplicate commands (which could otherwise persist an
+// agent with zero usable commands, or a command that references a plugin that
+// does not exist).
+func validateAgentPayload(payload AgentConfigPayload) error {
+	if strings.TrimSpace(payload.Name) == "" {
+		return fmt.Errorf("agent name is required")
+	}
+	if len(payload.Commands) == 0 {
+		return fmt.Errorf("at least one command is required")
+	}
+
+	seen := make(map[string]bool, len(payload.Commands))
+	for i, cmd := range payload.Commands {
+		name := strings.TrimSpace(cmd.Name)
+		if name == "" {
+			return fmt.Errorf("command #%d: name is required", i+1)
+		}
+		if seen[name] {
+			return fmt.Errorf("duplicate command name: %q", name)
+		}
+		seen[name] = true
+
+		template := strings.TrimSpace(cmd.Template)
+		usePlugin := strings.TrimSpace(cmd.UsePlugin)
+		if template == "" && usePlugin == "" {
+			return fmt.Errorf("command %q: a template or a plugin is required", name)
+		}
+		if usePlugin != "" {
+			if _, ok := plugin.GetManager().GetPlugin(usePlugin); !ok {
+				return fmt.Errorf("command %q: unknown plugin %q", name, usePlugin)
+			}
+		}
+	}
+	return nil
+}
+
 func (h *Handler) handleControlCreateAgent(w http.ResponseWriter, r *http.Request) {
 	var payload AgentConfigPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := validateAgentPayload(payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -523,6 +593,11 @@ func (h *Handler) handleControlUpdateAgent(w http.ResponseWriter, r *http.Reques
 	var payload AgentConfigPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := validateAgentPayload(payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 

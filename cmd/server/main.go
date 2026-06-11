@@ -21,6 +21,12 @@ import (
 	"YALS/internal/tls"
 	"YALS/internal/utils"
 
+	// Register agent plugin metadata so the control API can enumerate plugins and
+	// server-side target validation can see each plugin's ignore_target /
+	// maximum_queue overrides. Plugins only execute on agents; this import only
+	// registers their metadata, it does not run them.
+	_ "YALS/internal/plugin/agent"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )

@@ -10,6 +10,11 @@ import (
 // Shell operators that require bash execution
 var shellOperators = []string{"|", "&&", "||", ">", "<", ";"}
 
+// targetPlaceholder, when present in a command template, marks where the target
+// should be substituted. Templates without it keep the legacy behavior of having
+// the target appended at the end.
+const targetPlaceholder = "{target}"
+
 // ActiveCommand represents an active command with its details
 type ActiveCommand struct {
 	Cmd         *exec.Cmd

@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
-import { Github, Plus, Save, Trash2, Shield, Server, KeyRound, Settings, RefreshCw } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Github, Plus, Save, Trash2, Shield, Server, KeyRound, Settings, RefreshCw, ChevronUp, ChevronDown } from 'lucide-react';
 import { AgentSelector } from './components/AgentSelector';
 import { CommandPanel } from './components/CommandPanel';
 import { CustomConfig } from './hooks/useCustomConfig';
 import { useYalsClient } from './hooks/useYalsClient';
 import { AgentCommand, AgentConfigPayload, AgentConfigRecord, CommandType, IPVersion, RuntimeSettings } from './types/yals';
+import { getErrorMessage } from './utils/error';
 
 interface AppProps {
   config: CustomConfig;
@@ -38,8 +39,32 @@ function getCommandMode(command: AgentCommand): 'shell' | 'plugin' {
   return command.use_plugin ? 'plugin' : 'shell';
 }
 
-function getCommandValue(command: AgentCommand): string {
-  return command.use_plugin || command.template || '';
+// validateAgentForm mirrors the server-side checks so the operator gets
+// immediate, precise feedback before a save round-trip. Returns an error message
+// or null when the form is valid.
+function validateAgentForm(agent: AgentConfigPayload): string | null {
+  if (!agent.name.trim()) return 'Agent name is required';
+  if (agent.commands.length === 0) return 'At least one command is required';
+
+  const seen = new Set<string>();
+  for (let i = 0; i < agent.commands.length; i += 1) {
+    const command = agent.commands[i];
+    const name = command.name.trim();
+    if (!name) return `Command #${i + 1}: name is required`;
+    if (seen.has(name)) return `Duplicate command name: ${name}`;
+    seen.add(name);
+
+    if (getCommandMode(command) === 'shell') {
+      const template = (command.template || '').trim();
+      if (!template) return `Command "${name}": template is required`;
+      if (command.ignore_target && template.includes('{target}')) {
+        return `Command "${name}": template uses {target} but "Ignore Target Input" is enabled`;
+      }
+    } else if (!(command.use_plugin || '').trim()) {
+      return `Command "${name}": select a plugin`;
+    }
+  }
+  return null;
 }
 
 function App({ config }: AppProps) {
@@ -59,9 +84,11 @@ function App({ config }: AppProps) {
     stopCommand,
     isControlAuthenticated,
     managedAgents,
+    availablePlugins,
     runtimeSettings,
     loginControl,
     listManagedAgents,
+    listPlugins,
     fetchRuntimeSettings,
     saveRuntimeSettings,
     saveManagedAgent,
@@ -77,39 +104,47 @@ function App({ config }: AppProps) {
   const [editingAgent, setEditingAgent] = useState<AgentConfigPayload>(createEmptyAgent());
   const [editingRuntime, setEditingRuntime] = useState<RuntimeSettings>(runtimeSettings);
 
-  useMemo(() => {
+  useEffect(() => {
     if (!isControlPage && !isConnected && !isConnecting) {
-      connect();
+      connect().catch(() => {
+        // Connection errors are handled inside connect() (retry/backoff);
+        // swallow here to avoid an unhandled promise rejection.
+      });
     }
-    return null;
   }, [connect, isConnected, isConnecting, isControlPage]);
 
-  useMemo(() => {
-    if (isControlPage && isControlAuthenticated) {
-      listManagedAgents().catch((error) => {
-        console.error(error);
-        setControlError('Failed to load agent records');
-      });
-      fetchRuntimeSettings()
-        .then((settings) => setEditingRuntime(settings))
-        .catch((error) => {
-          console.error(error);
-          setControlError('Failed to load runtime settings');
-        });
-    }
-    return null;
-  }, [fetchRuntimeSettings, isControlAuthenticated, isControlPage, listManagedAgents]);
+  // Single place that loads control-plane data once the session is
+  // authenticated. editingRuntime is kept in sync from runtimeSettings by the
+  // effect below, so it is intentionally not set here.
+  useEffect(() => {
+    if (!isControlPage || !isControlAuthenticated) return;
+    listManagedAgents().catch((error) => {
+      console.error(error);
+      setControlError('Failed to load agent records');
+    });
+    listPlugins().catch((error) => {
+      console.error(error);
+      setControlError('Failed to load plugin list');
+    });
+    fetchRuntimeSettings().catch((error) => {
+      console.error(error);
+      setControlError('Failed to load runtime settings');
+    });
+  }, [fetchRuntimeSettings, isControlAuthenticated, isControlPage, listManagedAgents, listPlugins]);
 
-  useMemo(() => {
+  useEffect(() => {
     setEditingRuntime(runtimeSettings);
-    return null;
   }, [runtimeSettings]);
 
   const generateRandomToken = () => {
+    // This token becomes the agent's authentication secret, so it must be
+    // generated with a CSPRNG rather than the predictable Math.random().
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+    const randomValues = new Uint32Array(24);
+    crypto.getRandomValues(randomValues);
     let result = '';
     for (let i = 0; i < 24; i += 1) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
+      result += chars.charAt(randomValues[i] % chars.length);
     }
     setEditingAgent((prev) => ({ ...prev, token: result }));
   };
@@ -120,9 +155,9 @@ function App({ config }: AppProps) {
       clearAllStreamingOutputs();
       const { response } = await executeCommand(command, target, ipVersion);
       setLatestOutput(response.output || '');
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Command execution failed:', error);
-      setLatestOutput(error.message || 'Command execution failed');
+      setLatestOutput(getErrorMessage(error) || 'Command execution failed');
     }
   };
 
@@ -140,12 +175,11 @@ function App({ config }: AppProps) {
   const handleControlLogin = async () => {
     try {
       setControlError(null);
+      // loginControl flips isControlAuthenticated; the load effect above then
+      // fetches the agents and runtime settings, so we don't fetch them here.
       await loginControl(controlPassword);
-      await listManagedAgents();
-      const settings = await fetchRuntimeSettings();
-      setEditingRuntime(settings);
-    } catch (error: any) {
-      setControlError(error.message || 'Control panel login failed');
+    } catch (error: unknown) {
+      setControlError(getErrorMessage(error) || 'Control panel login failed');
     }
   };
 
@@ -154,9 +188,9 @@ function App({ config }: AppProps) {
       setControlError(null);
       const saved = await saveRuntimeSettings(editingRuntime);
       setEditingRuntime(saved);
-      setControlMessage('Runtime settings were saved and hot reloaded');
-    } catch (error: any) {
-      setControlError(error.message || 'Failed to save runtime settings');
+      setControlMessage('Runtime settings saved. Rate-limit changes apply immediately; gRPC keepalive changes take effect after a server restart.');
+    } catch (error: unknown) {
+      setControlError(getErrorMessage(error) || 'Failed to save runtime settings');
     }
   };
 
@@ -172,13 +206,13 @@ function App({ config }: AppProps) {
     setEditingAgent((prev) => {
       const commandsCopy = [...prev.commands];
       const current = commandsCopy[index];
-      const currentValue = getCommandValue(current);
       const nextMode = getCommandMode(current) === 'shell' ? 'plugin' : 'shell';
-      commandsCopy[index] = {
-        ...current,
-        template: nextMode === 'shell' ? currentValue : '',
-        use_plugin: nextMode === 'plugin' ? currentValue : ''
-      };
+      // A shell template and a plugin name are not interchangeable, so switching
+      // modes does not carry the value over. Entering plugin mode preselects the
+      // first available plugin (the mode is inferred from use_plugin being set).
+      commandsCopy[index] = nextMode === 'plugin'
+        ? { ...current, template: '', use_plugin: availablePlugins[0]?.name || '' }
+        : { ...current, template: '', use_plugin: '' };
       return { ...prev, commands: commandsCopy };
     });
   };
@@ -211,6 +245,16 @@ function App({ config }: AppProps) {
     }));
   };
 
+  const moveCommand = (index: number, direction: -1 | 1) => {
+    setEditingAgent((prev) => {
+      const target = index + direction;
+      if (target < 0 || target >= prev.commands.length) return prev;
+      const commandsCopy = [...prev.commands];
+      [commandsCopy[index], commandsCopy[target]] = [commandsCopy[target], commandsCopy[index]];
+      return { ...prev, commands: commandsCopy };
+    });
+  };
+
   const startCreateAgent = () => {
     setControlMessage(null);
     setControlError(null);
@@ -234,6 +278,12 @@ function App({ config }: AppProps) {
   };
 
   const handleSaveAgent = async () => {
+    const validationError = validateAgentForm(editingAgent);
+    if (validationError) {
+      setControlMessage(null);
+      setControlError(validationError);
+      return;
+    }
     try {
       setControlError(null);
       const saved = await saveManagedAgent(editingAgent);
@@ -246,8 +296,8 @@ function App({ config }: AppProps) {
         commands: saved.commands
       });
       setControlMessage(`Agent saved. UUID: ${saved.uuid}, Token: ${saved.token}`);
-    } catch (error: any) {
-      setControlError(error.message || 'Failed to save agent');
+    } catch (error: unknown) {
+      setControlError(getErrorMessage(error) || 'Failed to save agent');
     }
   };
 
@@ -255,12 +305,11 @@ function App({ config }: AppProps) {
     if (!uuid) return;
     try {
       setControlError(null);
-      await deleteManagedAgent(uuid);
+      await deleteManagedAgent(uuid); // already refreshes the agent list
       setControlMessage('Agent deleted');
       setEditingAgent(createEmptyAgent());
-      await listManagedAgents();
-    } catch (error: any) {
-      setControlError(error.message || 'Failed to delete agent');
+    } catch (error: unknown) {
+      setControlError(getErrorMessage(error) || 'Failed to delete agent');
     }
   };
 
@@ -328,6 +377,9 @@ function App({ config }: AppProps) {
                       <input className="command-target-input" type="number" placeholder="60" value={editingRuntime.rate_limit.time_window} onChange={(e) => setEditingRuntime({ ...editingRuntime, rate_limit: { ...editingRuntime.rate_limit, time_window: Number(e.target.value) } })} />
                     </div>
                   </div>
+                  <p className="text-xs text-gray-500">
+                    Rate-limit changes apply immediately. gRPC keepalive changes are saved but only take effect after a server restart.
+                  </p>
                   <label className="text-sm text-gray-700 flex items-center gap-2">
                     <input type="checkbox" checked={editingRuntime.rate_limit.enabled} onChange={(e) => setEditingRuntime({ ...editingRuntime, rate_limit: { ...editingRuntime.rate_limit, enabled: e.target.checked } })} />
                     Enable Rate Limiting
@@ -413,21 +465,71 @@ function App({ config }: AppProps) {
                       {editingAgent.commands.map((command, index) => {
                         const mode = getCommandMode(command);
                         const queueEnabled = (command.maxmium_queue ?? 0) > 0;
+                        const selectedPlugin = mode === 'plugin'
+                          ? availablePlugins.find((p) => p.name === command.use_plugin)
+                          : undefined;
+                        const ignoreTargetForced = mode === 'plugin' && selectedPlugin?.ignore_target_overridden === true;
+                        const queueForced = mode === 'plugin' && selectedPlugin?.maximum_queue_overridden === true;
+                        const ignoreTargetChecked = ignoreTargetForced ? selectedPlugin!.ignore_target : (command.ignore_target || false);
                         return (
                           <div key={index} className="border border-gray-200 rounded-md p-3 space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-medium text-gray-500">Command #{index + 1}</span>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  className="p-1 text-gray-500 hover:text-gray-900 disabled:opacity-30 disabled:cursor-not-allowed"
+                                  disabled={index === 0}
+                                  onClick={() => moveCommand(index, -1)}
+                                  title="Move up"
+                                >
+                                  <ChevronUp className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="p-1 text-gray-500 hover:text-gray-900 disabled:opacity-30 disabled:cursor-not-allowed"
+                                  disabled={index === editingAgent.commands.length - 1}
+                                  onClick={() => moveCommand(index, 1)}
+                                  title="Move down"
+                                >
+                                  <ChevronDown className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                               <div>
                                 <FieldLabel>Command Name</FieldLabel>
                                 <input className="command-target-input" placeholder="Command name" value={command.name} onChange={(e) => updateCommand(index, { name: e.target.value })} />
                               </div>
                               <div>
-                                <FieldLabel>Template</FieldLabel>
-                                <input
-                                  className="command-target-input"
-                                  placeholder={mode === 'shell' ? 'Template, for example ping -c 4' : 'Plugin name, for example tcping'}
-                                  value={getCommandValue(command)}
-                                  onChange={(e) => updateCommandSourceValue(index, e.target.value)}
-                                />
+                                <FieldLabel>{mode === 'shell' ? 'Template' : 'Plugin'}</FieldLabel>
+                                {mode === 'shell' ? (
+                                  <input
+                                    className="command-target-input"
+                                    placeholder="e.g. ping -c 4 {target}"
+                                    value={command.template || ''}
+                                    onChange={(e) => updateCommandSourceValue(index, e.target.value)}
+                                  />
+                                ) : (
+                                  <select
+                                    className="command-select w-full"
+                                    value={command.use_plugin || ''}
+                                    onChange={(e) => updateCommandSourceValue(index, e.target.value)}
+                                  >
+                                    <option value="" disabled>Select a plugin</option>
+                                    {availablePlugins.map((p) => (
+                                      <option key={p.name} value={p.name}>{p.name}</option>
+                                    ))}
+                                  </select>
+                                )}
+                                {mode === 'shell' && (
+                                  <p className="text-xs text-gray-500 mt-1">
+                                    Use <code>{'{target}'}</code> to place the target; if omitted it is appended at the end.
+                                  </p>
+                                )}
+                                {mode === 'plugin' && selectedPlugin?.description && (
+                                  <p className="text-xs text-gray-500 mt-1">{selectedPlugin.description}</p>
+                                )}
                               </div>
                               <div>
                                 <FieldLabel>Mode</FieldLabel>
@@ -441,31 +543,44 @@ function App({ config }: AppProps) {
                               </div>
                               <div>
                                 <FieldLabel>Maximum Queue</FieldLabel>
-                                <div className="flex items-center gap-2">
-                                  <label className="text-sm text-gray-700 flex items-center gap-2 whitespace-nowrap">
+                                {queueForced ? (
+                                  <p className="text-sm text-gray-600">
+                                    {selectedPlugin!.maximum_queue > 0
+                                      ? `${selectedPlugin!.maximum_queue} (set by plugin)`
+                                      : 'Unlimited (set by plugin)'}
+                                  </p>
+                                ) : (
+                                  <div className="flex items-center gap-2">
+                                    <label className="text-sm text-gray-700 flex items-center gap-2 whitespace-nowrap">
+                                      <input
+                                        type="checkbox"
+                                        checked={queueEnabled}
+                                        onChange={(e) => updateCommand(index, { maxmium_queue: e.target.checked ? Math.max(command.maxmium_queue ?? 0, 1) : 0 })}
+                                      />
+                                      Enabled
+                                    </label>
                                     <input
-                                      type="checkbox"
-                                      checked={queueEnabled}
-                                      onChange={(e) => updateCommand(index, { maxmium_queue: e.target.checked ? Math.max(command.maxmium_queue ?? 0, 1) : 0 })}
+                                      className="command-target-input"
+                                      type="number"
+                                      min="1"
+                                      placeholder="Concurrency"
+                                      disabled={!queueEnabled}
+                                      value={queueEnabled ? String(command.maxmium_queue ?? 1) : ''}
+                                      onChange={(e) => updateCommand(index, { maxmium_queue: Number(e.target.value) || 1 })}
                                     />
-                                    Enabled
-                                  </label>
-                                  <input
-                                    className="command-target-input"
-                                    type="number"
-                                    min="1"
-                                    placeholder="Concurrency"
-                                    disabled={!queueEnabled}
-                                    value={queueEnabled ? String(command.maxmium_queue ?? 1) : ''}
-                                    onChange={(e) => updateCommand(index, { maxmium_queue: Number(e.target.value) || 1 })}
-                                  />
-                                </div>
+                                  </div>
+                                )}
                               </div>
                             </div>
                             <div className="flex items-center justify-between">
                               <label className="text-sm text-gray-700 flex items-center gap-2">
-                                <input type="checkbox" checked={command.ignore_target || false} onChange={(e) => updateCommand(index, { ignore_target: e.target.checked })} />
-                                Ignore Target Input
+                                <input
+                                  type="checkbox"
+                                  checked={ignoreTargetChecked}
+                                  disabled={ignoreTargetForced}
+                                  onChange={(e) => updateCommand(index, { ignore_target: e.target.checked })}
+                                />
+                                Ignore Target Input{ignoreTargetForced ? ' (set by plugin)' : ''}
                               </label>
                               <button className="command-button danger" onClick={() => removeCommand(index)}>
                                 <Trash2 className="w-4 h-4" /> Remove Command

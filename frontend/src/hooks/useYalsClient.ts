@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Agent, AgentCommand, AgentConfigPayload, AgentConfigRecord, CommandResponse, CommandType, CommandHistory, AgentGroupData, CommandConfig, ControlSessionResponse, IPVersion, RuntimeSettings } from '../types/yals';
+import { Agent, AgentCommand, AgentConfigPayload, AgentConfigRecord, CommandResponse, CommandType, CommandHistory, AgentGroupData, CommandConfig, ControlSessionResponse, IPVersion, RuntimeSettings, PluginInfo } from '../types/yals';
 
 interface UseYalsClientOptions {
   serverUrl?: string;
@@ -13,6 +13,18 @@ const getLocalStorage = (key: string): string | null => {
   } catch {
     return null;
   }
+};
+
+// createSessionId generates a session id entirely on the client. The session id
+// is just a per-tab correlation token (used to build command ids and to target
+// stop requests), so there is no need for a server round-trip to mint it. Uses
+// the CSPRNG-backed crypto.randomUUID when available, with a getRandomValues
+// fallback for non-secure-context dev environments.
+const createSessionId = (): string => {
+  const uuid = typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+  return `session_${uuid}`;
 };
 
 const defaultRuntimeSettings: RuntimeSettings = {
@@ -57,10 +69,12 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
   const [controlToken, setControlToken] = useState<string | null>(() => sessionStorage.getItem('yals_control_token'));
   const [isControlAuthenticated, setIsControlAuthenticated] = useState<boolean>(() => !!sessionStorage.getItem('yals_control_token'));
   const [managedAgents, setManagedAgents] = useState<AgentConfigRecord[]>([]);
+  const [availablePlugins, setAvailablePlugins] = useState<PluginInfo[]>([]);
   const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>(defaultRuntimeSettings);
 
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectRef = useRef<(() => Promise<void>) | null>(null);
 
   const {
     serverUrl = window.location.host,
@@ -115,7 +129,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
 
     const allAgents: Agent[] = [];
     if (Array.isArray(data.groups)) {
-      data.groups.forEach((group: any) => {
+      data.groups.forEach((group: { agents?: Agent[] }) => {
         if (Array.isArray(group.agents)) {
           allAgents.push(...group.agents);
         }
@@ -135,58 +149,47 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     }
   }, [buildHeaders, protocol, serverUrl, selectedAgent, setLocalStorage, mapAgentCommandsToCommandConfigs]);
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async (): Promise<void> => {
     setIsConnecting(true);
 
-    return new Promise<void>(async (resolve, reject) => {
-      try {
-        let currentSessionId = sessionId || sessionStorage.getItem('yals_session_id');
+    try {
+      let currentSessionId = sessionId || sessionStorage.getItem('yals_session_id');
 
-        if (!currentSessionId) {
-          const response = await fetch(`${protocol}//${serverUrl}/api/session`, {
-            method: 'GET',
-            headers: buildHeaders({ Accept: 'application/json' })
-          });
-
-          if (!response.ok) {
-            throw new Error(`Failed to get session ID from server: ${response.status}`);
-          }
-
-          const sessionData = await response.json();
-          currentSessionId = sessionData.session_id as string;
-          if (!currentSessionId) {
-            throw new Error('No session ID available');
-          }
-          sessionStorage.setItem('yals_session_id', currentSessionId);
-        }
-
-        setSessionId(currentSessionId);
-        await fetchNodesData(currentSessionId);
-        setIsConnected(true);
-        setIsConnecting(false);
-        reconnectAttemptsRef.current = 0;
-
-        if (reconnectTimeoutRef.current) {
-          clearTimeout(reconnectTimeoutRef.current);
-          reconnectTimeoutRef.current = null;
-        }
-
-        resolve();
-      } catch (error) {
-        console.error('YALS: Connection error:', error);
-        setIsConnecting(false);
-        setIsConnected(false);
-
-        if (reconnectAttemptsRef.current < maxReconnectAttempts) {
-          reconnectAttemptsRef.current++;
-          const delay = Math.min(30000, reconnectDelay * Math.pow(1.5, reconnectAttemptsRef.current - 1));
-          reconnectTimeoutRef.current = setTimeout(() => connect(), delay);
-        }
-
-        reject(error);
+      if (!currentSessionId) {
+        currentSessionId = createSessionId();
+        sessionStorage.setItem('yals_session_id', currentSessionId);
       }
-    });
-  }, [buildHeaders, fetchNodesData, maxReconnectAttempts, protocol, reconnectDelay, serverUrl, sessionId]);
+
+      setSessionId(currentSessionId);
+      await fetchNodesData(currentSessionId);
+      setIsConnected(true);
+      setIsConnecting(false);
+      reconnectAttemptsRef.current = 0;
+
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+    } catch (error) {
+      console.error('YALS: Connection error:', error);
+      setIsConnecting(false);
+      setIsConnected(false);
+
+      if (reconnectAttemptsRef.current < maxReconnectAttempts) {
+        reconnectAttemptsRef.current++;
+        const delay = Math.min(30000, reconnectDelay * Math.pow(1.5, reconnectAttemptsRef.current - 1));
+        reconnectTimeoutRef.current = setTimeout(() => { void connectRef.current?.(); }, delay);
+      }
+
+      throw error;
+    }
+  }, [fetchNodesData, maxReconnectAttempts, reconnectDelay, sessionId]);
+
+  // Keep a ref to the latest connect() so the reconnect timer can re-invoke it
+  // without the callback depending on (or closing over a stale) version of itself.
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   useEffect(() => {
     if (selectedAgent) {
@@ -194,6 +197,10 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       const agentCommands = agent?.commands as AgentCommand[] | undefined;
       if (agentCommands && Array.isArray(agentCommands)) {
         const commandsList = mapAgentCommandsToCommandConfigs(agentCommands);
+        // Intentional: keep the command list in sync with the selected agent and
+        // persist it. It is not purely derivable during render because it is also
+        // seeded from localStorage; a full refactor is out of scope here.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setCommands(commandsList);
         setLocalStorage('yals_commands', JSON.stringify(commandsList));
       }
@@ -296,6 +303,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
+        let buffer = '';
 
         while (true) {
           const { done, value } = await reader.read();
@@ -313,8 +321,12 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
             break;
           }
 
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split('\n');
+          // Accumulate into a buffer and only process complete lines. A single
+          // reader.read() may split an SSE frame across chunk boundaries, so the
+          // trailing partial line is kept until the next read completes it.
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
           for (const line of lines) {
             if (!line.startsWith('data: ')) continue;
             try {
@@ -458,6 +470,24 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     return data;
   }, [buildHeaders, controlHeaders, protocol, serverUrl]);
 
+  const listPlugins = useCallback(async () => {
+    const response = await fetch(`${protocol}//${serverUrl}/api/control/plugins`, {
+      method: 'GET',
+      headers: buildHeaders({
+        Accept: 'application/json',
+        ...controlHeaders()
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('获取插件列表失败');
+    }
+
+    const data = await response.json() as PluginInfo[];
+    setAvailablePlugins(data);
+    return data;
+  }, [buildHeaders, controlHeaders, protocol, serverUrl]);
+
   const fetchRuntimeSettings = useCallback(async () => {
     const response = await fetch(`${protocol}//${serverUrl}/api/control/runtime`, {
       method: 'GET',
@@ -534,15 +564,14 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
 
   useEffect(() => {
     if (isControlPage) {
-      validateControlSession()
-        .then((ok) => {
-          if (ok) {
-            fetchRuntimeSettings().catch(() => setRuntimeSettings(defaultRuntimeSettings));
-          }
-        })
-        .catch(() => setIsControlAuthenticated(false));
+      // Only validate a stored control session here. Loading the control-plane
+      // data (agents + runtime settings) is the App component's single
+      // responsibility once isControlAuthenticated flips true — keeping it out of
+      // this hook avoids the duplicate fetches the two used to trigger together.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      validateControlSession().catch(() => setIsControlAuthenticated(false));
     }
-  }, [fetchRuntimeSettings, isControlPage, validateControlSession]);
+  }, [isControlPage, validateControlSession]);
 
   return {
     isConnected,
@@ -562,10 +591,12 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     stopCommand,
     isControlAuthenticated,
     managedAgents,
+    availablePlugins,
     runtimeSettings,
     loginControl,
     validateControlSession,
     listManagedAgents,
+    listPlugins,
     fetchRuntimeSettings,
     saveRuntimeSettings,
     saveManagedAgent,
