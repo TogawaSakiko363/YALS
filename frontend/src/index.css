@@ -953,7 +953,10 @@ div[ref="terminalRef"] {
   background-color: #ffffff;
   border: 1px solid #e5e7eb;
   border-radius: var(--radius);
-  overflow: hidden;
+  /* Scroll wide tables horizontally (drag on touch / portrait) instead of
+     clipping or cramming the columns. */
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .control-table {
@@ -977,6 +980,14 @@ div[ref="terminalRef"] {
   border-bottom: 1px solid #f3f4f6;
   color: #374151;
   vertical-align: middle;
+  /* Keep cells on one line so a narrow viewport scrolls the table rather than
+     compressing/wrapping the columns. Full-width cells opt back out below. */
+  white-space: nowrap;
+}
+
+.control-table td.probes-chart-cell,
+.control-table td.control-table-empty {
+  white-space: normal;
 }
 
 .control-table tr:last-child td {
@@ -1255,6 +1266,7 @@ div[ref="terminalRef"] {
   .control-sidebar {
     width: 100%;
     flex-direction: row;
+    flex-wrap: wrap;
     align-items: center;
     border-right: none;
     border-bottom: 1px solid #e5e7eb;
@@ -1267,13 +1279,27 @@ div[ref="terminalRef"] {
 
   .control-nav {
     flex-direction: row;
+    flex-wrap: wrap;
     padding: 0.5rem;
-    flex: 1;
+    flex: 1 1 auto;
+  }
+
+  .control-nav-item {
+    width: auto;
   }
 
   .control-sidebar-footer {
     border-top: none;
     padding: 0.5rem;
+  }
+
+  .control-topbar {
+    flex-wrap: wrap;
+    padding: 0.75rem 1rem;
+  }
+
+  .control-body {
+    padding: 1rem;
   }
 
   .control-drawer {
@@ -1506,6 +1532,23 @@ div[ref="terminalRef"] {
   margin-top: 0.5rem;
   font-size: 0.75rem;
   color: #6b7280;
+}
+
+/* Compact (small-screen) chart: tighter labels, caption and cell padding. */
+.latency-chart.compact .latency-chart-axis-label {
+  font-size: 9px;
+}
+
+.latency-chart.compact .latency-chart-caption {
+  gap: 0.5rem 0.75rem;
+  margin-top: 0.35rem;
+  font-size: 0.68rem;
+}
+
+@media (max-width: 640px) {
+  .probes-chart-cell {
+    padding: 0.4rem 0.5rem 0.5rem;
+  }
 }
 
 .latency-chart-empty {

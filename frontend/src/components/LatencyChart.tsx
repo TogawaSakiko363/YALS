@@ -8,14 +8,6 @@ interface LatencyChartProps {
   name: string;
 }
 
-const HEIGHT = 180;
-const M_TOP = 10;
-const M_RIGHT = 12;
-const M_BOTTOM = 26; // room for the time (x) axis labels
-const M_LEFT = 52;   // room for the latency (y) axis labels
-const Y_TICKS = 4;
-const X_TICKS = 4;
-
 function fmtTime(ts: number): string {
   const d = new Date(ts * 1000);
   const hh = String(d.getHours()).padStart(2, '0');
@@ -51,6 +43,28 @@ export function LatencyChart({ points, name }: LatencyChartProps) {
   const hue = useMemo(() => hueFromString(name), [name]);
   const lineColor = `hsl(${hue} 70% 42%)`;
   const fillColor = `hsl(${hue} 75% 50%)`;
+
+  // On small screens shrink the chart (height, margins, tick count) so the
+  // expanded row stays compact. The container itself can be wider than the
+  // viewport (the table scrolls horizontally), so detect the small screen via a
+  // viewport media query rather than the measured container width.
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 640px)');
+    const update = () => setCompact(mq.matches);
+    update();
+    mq.addEventListener('change', update);
+    return () => mq.removeEventListener('change', update);
+  }, []);
+
+  const HEIGHT = compact ? 120 : 180;
+  const M_TOP = compact ? 8 : 10;
+  const M_RIGHT = compact ? 8 : 12;
+  const M_BOTTOM = compact ? 18 : 26; // room for the time (x) axis labels
+  const M_LEFT = compact ? 38 : 52;   // room for the latency (y) axis labels
+  const X_LABEL_DY = compact ? 11 : 16;
+  const Y_TICKS = compact ? 3 : 4;
+  const X_TICKS = compact ? 3 : 4;
 
   useEffect(() => {
     const el = containerRef.current;
@@ -137,10 +151,10 @@ export function LatencyChart({ points, name }: LatencyChartProps) {
     const lossXs = points.filter((p) => p.recv === 0).map((p) => xOf(p.ts));
 
     return { plotL, plotR, plotT, plotB, segments, yTicks, xTicks, ySpan, lossXs, xOf, yOf };
-  }, [stats, width, points]);
+  }, [stats, width, points, HEIGHT, M_TOP, M_RIGHT, M_BOTTOM, M_LEFT, Y_TICKS, X_TICKS]);
 
   return (
-    <div className="latency-chart" ref={containerRef}>
+    <div className={`latency-chart${compact ? ' compact' : ''}`} ref={containerRef}>
       {points.length === 0 ? (
         <div className="latency-chart-empty">No data</div>
       ) : !stats ? (
@@ -168,7 +182,7 @@ export function LatencyChart({ points, name }: LatencyChartProps) {
           {chart.xTicks.map((t, i) => (
             <g key={`x${i}`}>
               <line x1={t.x} y1={chart.plotB} x2={t.x} y2={chart.plotB + 4} stroke="#d1d5db" strokeWidth={1} />
-              <text x={t.x} y={chart.plotB + 16} textAnchor="middle" className="latency-chart-axis-label">
+              <text x={t.x} y={chart.plotB + X_LABEL_DY} textAnchor="middle" className="latency-chart-axis-label">
                 {fmtTime(t.ts)}
               </text>
             </g>
