@@ -142,7 +142,7 @@ func (h *Handler) currentProbeConfig() proto.ProbeConfig {
 	}
 	specs := make([]proto.ProbeTargetSpec, 0, len(h.probeTargets))
 	for _, t := range h.probeTargets {
-		specs = append(specs, proto.ProbeTargetSpec{IP: t.IP, Name: t.Name, Location: t.Location, ISP: t.ISP, Protocol: t.Protocol})
+		specs = append(specs, proto.ProbeTargetSpec{IP: t.IP, Name: t.Name, Location: t.Location, ISP: t.ISP, Protocol: t.Protocol, Port: t.Port})
 	}
 	return proto.ProbeConfig{IntervalSec: interval, Targets: specs}
 }
@@ -226,11 +226,14 @@ type probeRow struct {
 	Location  string  `json:"location"`
 	ISP       string  `json:"isp"`
 	Protocol  string  `json:"protocol"`
+	Port      int     `json:"port"`
 	HasData   bool    `json:"has_data"`
 	LatestMs  float64 `json:"latest_ms"`
 	HasLatest bool    `json:"has_latest"`
 	AvgMs     float64 `json:"avg_ms"`
 	HasAvg    bool    `json:"has_avg"`
+	WorstMs   float64 `json:"worst_ms"`
+	HasWorst  bool    `json:"has_worst"`
 	LossPct   float64 `json:"loss_pct"`
 }
 
@@ -282,13 +285,15 @@ func (h *Handler) handleProbes(w http.ResponseWriter, r *http.Request) {
 
 	rows := make([]probeRow, 0, len(targets))
 	for _, t := range targets {
-		row := probeRow{Name: t.Name, Location: t.Location, ISP: t.ISP, Protocol: t.Protocol}
+		row := probeRow{Name: t.Name, Location: t.Location, ISP: t.ISP, Protocol: t.Protocol, Port: t.Port}
 		if agg, ok := aggByName[t.Name]; ok && agg.Sent > 0 {
 			row.HasData = true
 			row.HasLatest = agg.LatestRecv > 0
 			row.LatestMs = agg.LatestMs
 			row.HasAvg = agg.Recv > 0
 			row.AvgMs = agg.AvgMs
+			row.HasWorst = agg.Recv > 0
+			row.WorstMs = agg.WorstMs
 			row.LossPct = float64(agg.Sent-agg.Recv) / float64(agg.Sent) * 100
 		}
 		rows = append(rows, row)
@@ -297,6 +302,41 @@ func (h *Handler) handleProbes(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	h.setNoCacheHeaders(w)
 	_ = json.NewEncoder(w).Encode(map[string]any{"agent": agentName, "rows": rows})
+}
+
+// handleProbesSeries returns one target's per-cycle latency over a window, for
+// the expandable per-row chart on the Probes page.
+func (h *Handler) handleProbesSeries(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.validateSessionID(r.URL.Query().Get("session_id")) {
+		http.Error(w, "Invalid or missing session_id", http.StatusUnauthorized)
+		return
+	}
+
+	agentName := strings.TrimSpace(r.URL.Query().Get("agent"))
+	if agentName == "" {
+		agentName = h.firstAgentName()
+	}
+	target := strings.TrimSpace(r.URL.Query().Get("target"))
+	sinceTS := time.Now().Add(-time.Duration(windowSeconds(r.URL.Query().Get("window"))) * time.Second).Unix()
+
+	points := []serverstore.ProbeSeriesPoint{}
+	if agentName != "" && target != "" {
+		got, err := h.store.QueryProbeSeries(agentName, target, sinceTS)
+		if err != nil {
+			logger.Errorf("Failed to query probe series: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		points = got
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	h.setNoCacheHeaders(w)
+	_ = json.NewEncoder(w).Encode(map[string]any{"agent": agentName, "target": target, "points": points})
 }
 
 func (h *Handler) handleProbesMeta(w http.ResponseWriter, r *http.Request) {
@@ -408,6 +448,9 @@ func validateProbeTargets(targets []probe.Target) error {
 		seen[name] = true
 		if strings.TrimSpace(t.IP) == "" {
 			return fmt.Errorf("target %q: IP is required", name)
+		}
+		if strings.EqualFold(strings.TrimSpace(t.Protocol), "TCP") && (t.Port < 1 || t.Port > 65535) {
+			return fmt.Errorf("target %q: TCP requires a port between 1 and 65535", name)
 		}
 	}
 	return nil

@@ -1,3 +1,4 @@
+import { Settings } from 'lucide-react';
 import { CustomConfig } from '../hooks/useCustomConfig';
 
 interface PageHeaderProps {
@@ -15,13 +16,18 @@ export function PageHeader({ config, active }: PageHeaderProps) {
             <a href="/" className="logo-container" aria-label="Looking Glass">
               <img src={config.logoPath} alt="Logo" className="logo-image" />
             </a>
-            <div className="app-title">
+            <a href="/" className="app-title" aria-label="Looking Glass home">
               <h1 className="title-large">Looking Glass</h1>
-            </div>
+            </a>
             <nav className="page-nav">
               <a href="/status" className={`page-nav-link ${active === 'status' ? 'active' : ''}`}>Status</a>
               <a href="/probes" className={`page-nav-link ${active === 'probes' ? 'active' : ''}`}>Probes</a>
             </nav>
+          </div>
+          <div className="header-right">
+            <a href="/control" className="header-gear" title="Control panel" aria-label="Control panel">
+              <Settings className="w-5 h-5" />
+            </a>
           </div>
         </div>
       </div>

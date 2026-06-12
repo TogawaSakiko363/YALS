@@ -317,6 +317,18 @@ func (h *Handler) handleGetNodes(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleVersion exposes the application version as public, unauthenticated build
+// info so every page's shared footer can render it without a session.
+func (h *Handler) handleVersion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	h.setNoCacheHeaders(w)
+	_ = json.NewEncoder(w).Encode(map[string]string{"version": utils.GetAppVersion()})
+}
+
 func (h *Handler) handleControlLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Agent, AgentCommand, AgentConfigPayload, AgentConfigRecord, CommandResponse, CommandType, CommandHistory, AgentGroupData, CommandConfig, ControlSessionResponse, IPVersion, RuntimeSettings, PluginInfo, StatusItem, ProbeRow, ProbeConfigPayload } from '../types/yals';
+import { Agent, AgentCommand, AgentConfigPayload, AgentConfigRecord, CommandResponse, CommandType, CommandHistory, AgentGroupData, CommandConfig, ControlSessionResponse, IPVersion, RuntimeSettings, PluginInfo, StatusItem, ProbeRow, ProbeSeriesPoint, ProbeConfigPayload } from '../types/yals';
 
 interface UseYalsClientOptions {
   serverUrl?: string;
@@ -552,8 +552,8 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     return await response.json() as { agents: string[] };
   }, [buildHeaders, protocol, serverUrl, publicSession]);
 
-  const fetchProbes = useCallback(async (agent: string, group: string, window: string): Promise<{ agent: string; rows: ProbeRow[] }> => {
-    const params = new URLSearchParams({ session_id: publicSession(), agent, group, window });
+  const fetchProbes = useCallback(async (agent: string, window: string): Promise<{ agent: string; rows: ProbeRow[] }> => {
+    const params = new URLSearchParams({ session_id: publicSession(), agent, window });
     const response = await fetch(`${protocol}//${serverUrl}/api/probes?${params.toString()}`, {
       method: 'GET',
       headers: buildHeaders({ Accept: 'application/json' })
@@ -562,6 +562,18 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
       throw new Error(`Failed to fetch probes: ${response.status}`);
     }
     return await response.json() as { agent: string; rows: ProbeRow[] };
+  }, [buildHeaders, protocol, serverUrl, publicSession]);
+
+  const fetchProbeSeries = useCallback(async (agent: string, target: string, window: string): Promise<{ points: ProbeSeriesPoint[] }> => {
+    const params = new URLSearchParams({ session_id: publicSession(), agent, target, window });
+    const response = await fetch(`${protocol}//${serverUrl}/api/probes/series?${params.toString()}`, {
+      method: 'GET',
+      headers: buildHeaders({ Accept: 'application/json' })
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch probe series: ${response.status}`);
+    }
+    return await response.json() as { points: ProbeSeriesPoint[] };
   }, [buildHeaders, protocol, serverUrl, publicSession]);
 
   const fetchProbeTargets = useCallback(async (): Promise<ProbeConfigPayload> => {
@@ -701,6 +713,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     fetchAgentStatuses,
     fetchStatus,
     fetchProbes,
+    fetchProbeSeries,
     fetchProbesMeta,
     fetchProbeTargets,
     saveProbeTargets,

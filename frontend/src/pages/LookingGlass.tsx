@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Github, Settings } from 'lucide-react';
 import { AgentSelector } from '../components/AgentSelector';
 import { CommandPanel } from '../components/CommandPanel';
 import { PageHeader } from '../components/PageHeader';
+import { PageFooter } from '../components/PageFooter';
 import { CustomConfig } from '../hooks/useCustomConfig';
 import { useYalsClient } from '../hooks/useYalsClient';
 import { CommandType, IPVersion } from '../types/yals';
@@ -22,7 +22,6 @@ export function LookingGlass({ config }: LookingGlassProps) {
     selectedAgent,
     activeCommands,
     streamingOutputs,
-    appConfig,
     commands,
     connect,
     executeCommand,
@@ -102,25 +101,7 @@ export function LookingGlass({ config }: LookingGlassProps) {
         </div>
       </main>
 
-      <footer className="app-footer">
-        <div className="container max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-3 sm:py-4 w-full">
-          <div className="footer-content">
-            <div className="footer-left">
-              <a href="https://github.com/TogawaSakiko363/YALS" target="_blank" rel="noopener noreferrer" className="github-link flex items-center gap-0.5">
-                Powered by YALS
-                <Github className="w-4 h-4" />
-              </a>
-              <p className="version-info">Version {appConfig?.version || 'unknown'}</p>
-              <a href="/control" title="Control panel" aria-label="Control panel" className="github-link flex items-center">
-                <Settings className="w-4 h-4" />
-              </a>
-            </div>
-            <div className="footer-right">
-              <p>{config.footerRightText}</p>
-            </div>
-          </div>
-        </div>
-      </footer>
+      <PageFooter config={config} />
     </div>
   );
 }

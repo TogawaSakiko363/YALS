@@ -154,11 +154,14 @@ export interface ProbeRow {
   location: string;
   isp: string;
   protocol: string;
+  port: number;
   has_data: boolean;
   latest_ms: number;
   has_latest: boolean;
   avg_ms: number;
   has_avg: boolean;
+  worst_ms: number;
+  has_worst: boolean;
   loss_pct: number;
 }
 
@@ -168,6 +171,13 @@ export interface ProbeTarget {
   location: string;
   isp: string;
   protocol: string;
+  port: number;
+}
+
+export interface ProbeSeriesPoint {
+  ts: number;
+  latency_ms: number;
+  recv: number;
 }
 
 export interface ProbeConfigPayload {

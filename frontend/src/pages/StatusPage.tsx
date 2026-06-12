@@ -3,6 +3,7 @@ import { CustomConfig } from '../hooks/useCustomConfig';
 import { useYalsClient } from '../hooks/useYalsClient';
 import { StatusItem } from '../types/yals';
 import { PageHeader } from '../components/PageHeader';
+import { PageFooter } from '../components/PageFooter';
 import { formatBytes, formatBps, formatPct, formatUptime } from '../utils/format';
 import { getErrorMessage } from '../utils/error';
 
@@ -102,6 +103,7 @@ export function StatusPage({ config }: StatusPageProps) {
           </div>
         </div>
       </main>
+      <PageFooter config={config} />
     </div>
   );
 }

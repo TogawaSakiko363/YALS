@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"flag"
@@ -111,6 +112,10 @@ func main() {
 			Certificates: []tls.Certificate{serverCert},
 			MinVersion:   tls.VersionTLS12,
 		},
+		// Drop the stdlib's benign "TLS handshake error" lines (see
+		// httpErrorLogFilter); they are expected with the built-in self-signed
+		// certificate and would otherwise flood the log on every browser hit.
+		ErrorLog: log.New(httpErrorLogFilter{}, "", log.Ldate|log.Ltime|log.Lshortfile),
 	}
 
 	go func() {
@@ -128,6 +133,21 @@ func main() {
 
 	grpcServer.GracefulStop()
 	_ = server.Shutdown(context.Background())
+}
+
+// httpErrorLogFilter is the writer behind the HTTPS server's ErrorLog. It drops
+// the stdlib's benign "TLS handshake error" lines — emitted whenever a client
+// rejects the built-in self-signed certificate (every browser does, since it is
+// untrusted by design) or a port scanner opens and immediately drops the
+// connection. These are expected noise, not actionable faults. Every other line
+// is forwarded to stdout unchanged, matching the rest of the server's logging.
+type httpErrorLogFilter struct{}
+
+func (httpErrorLogFilter) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte("http: TLS handshake error")) {
+		return len(p), nil
+	}
+	return os.Stdout.Write(p)
 }
 
 func newGRPCServer(settings config.RuntimeSettings) *grpc.Server {

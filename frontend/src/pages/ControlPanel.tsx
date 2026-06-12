@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Save, Trash2, Shield, Server, KeyRound, Settings, RefreshCw, ChevronUp, ChevronDown, LogOut, Pencil, X, Activity } from 'lucide-react';
+import { Plus, Save, Trash2, Shield, Server, KeyRound, Settings, RefreshCw, ChevronUp, ChevronDown, LogOut, Pencil, X, Activity, Home } from 'lucide-react';
 import { CustomConfig } from '../hooks/useCustomConfig';
 import { useYalsClient } from '../hooks/useYalsClient';
 import { AgentCommand, AgentConfigPayload, AgentConfigRecord, RuntimeSettings, ProbeTarget } from '../types/yals';
@@ -161,7 +161,7 @@ export function ControlPanel({ config }: ControlPanelProps) {
     }
   };
 
-  const addTarget = () => setEditingTargets((prev) => [...prev, { ip: '', name: '', location: '', isp: '', protocol: 'ICMP' }]);
+  const addTarget = () => setEditingTargets((prev) => [...prev, { ip: '', name: '', location: '', isp: '', protocol: 'ICMP', port: 0 }]);
   const removeTarget = (index: number) => setEditingTargets((prev) => prev.filter((_, i) => i !== index));
   const updateTarget = (index: number, patch: Partial<ProbeTarget>) =>
     setEditingTargets((prev) => prev.map((t, i) => (i === index ? { ...t, ...patch } : t)));
@@ -184,6 +184,11 @@ export function ControlPanel({ config }: ControlPanelProps) {
       if (!t.ip.trim()) {
         setControlMessage(null);
         setControlError(`Target "${name}": IP is required`);
+        return;
+      }
+      if (t.protocol.toUpperCase() === 'TCP' && (!t.port || t.port < 1 || t.port > 65535)) {
+        setControlMessage(null);
+        setControlError(`Target "${name}": TCP requires a port between 1 and 65535`);
         return;
       }
     }
@@ -373,6 +378,9 @@ export function ControlPanel({ config }: ControlPanelProps) {
             </button>
           </nav>
           <div className="control-sidebar-footer">
+            <a href="/" className="control-nav-item">
+              <Home className="w-4 h-4" /> Looking Glass
+            </a>
             <button type="button" className="control-nav-item" onClick={logoutControl}>
               <LogOut className="w-4 h-4" /> Logout
             </button>
@@ -460,7 +468,7 @@ export function ControlPanel({ config }: ControlPanelProps) {
                     value={editingInterval}
                     onChange={(e) => setEditingInterval(Number(e.target.value) || 60)}
                   />
-                  <p className="text-xs text-gray-500 mt-1">How often each agent ICMP-pings every target.</p>
+                  <p className="text-xs text-gray-500 mt-1">How often each agent probes every target (ICMP ping or TCP connect).</p>
                 </div>
 
                 <div className="control-table-wrap">
@@ -472,17 +480,43 @@ export function ControlPanel({ config }: ControlPanelProps) {
                         <th>Location</th>
                         <th>ISP</th>
                         <th>Protocol</th>
+                        <th>Port</th>
                         <th aria-label="Actions"></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {editingTargets.map((t, index) => (
+                      {editingTargets.map((t, index) => {
+                        const isTCP = t.protocol.toUpperCase() === 'TCP';
+                        return (
                         <tr key={index}>
                           <td><input className="command-target-input" placeholder="Name" value={t.name} onChange={(e) => updateTarget(index, { name: e.target.value })} /></td>
                           <td><input className="command-target-input" placeholder="IP" value={t.ip} onChange={(e) => updateTarget(index, { ip: e.target.value })} /></td>
                           <td><input className="command-target-input" placeholder="Location" value={t.location} onChange={(e) => updateTarget(index, { location: e.target.value })} /></td>
                           <td><input className="command-target-input" placeholder="ISP" value={t.isp} onChange={(e) => updateTarget(index, { isp: e.target.value })} /></td>
-                          <td><input className="command-target-input" placeholder="ICMP" value={t.protocol} onChange={(e) => updateTarget(index, { protocol: e.target.value })} /></td>
+                          <td>
+                            <select
+                              className="command-select w-full"
+                              value={isTCP ? 'TCP' : 'ICMP'}
+                              onChange={(e) => updateTarget(index, e.target.value === 'TCP' && (!t.port || t.port < 1)
+                                ? { protocol: 'TCP', port: 443 }
+                                : { protocol: e.target.value })}
+                            >
+                              <option value="ICMP">ICMP</option>
+                              <option value="TCP">TCP</option>
+                            </select>
+                          </td>
+                          <td>
+                            <input
+                              className="command-target-input"
+                              type="number"
+                              min="1"
+                              max="65535"
+                              placeholder="Port"
+                              disabled={!isTCP}
+                              value={isTCP ? (t.port || '') : ''}
+                              onChange={(e) => updateTarget(index, { port: Number(e.target.value) || 0 })}
+                            />
+                          </td>
                           <td>
                             <div className="control-row-actions">
                               <button type="button" className="control-icon-button danger" onClick={() => removeTarget(index)}>
@@ -491,10 +525,11 @@ export function ControlPanel({ config }: ControlPanelProps) {
                             </div>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                       {editingTargets.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="control-table-empty">No targets yet. Click “Add Target” to add one.</td>
+                          <td colSpan={7} className="control-table-empty">No targets yet. Click “Add Target” to add one.</td>
                         </tr>
                       )}
                     </tbody>

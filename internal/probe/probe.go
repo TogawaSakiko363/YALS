@@ -10,6 +10,16 @@
 //     isp: ANYCAST
 //     protocol: ICMP
 //
+// protocol is ICMP (default) or TCP. A TCP target additionally needs a port,
+// which is the TCP destination the agent connects to to measure handshake RTT:
+//
+//   - targets:
+//   - 1.1.1.1
+//     labels:
+//     name: Cloudflare-DoT
+//     protocol: TCP
+//     port: 853
+//
 // labels.name is the unique tracking key used to correlate stored probe results;
 // renaming or removing a target makes its old data orphan (the server purges it).
 package probe
@@ -22,13 +32,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Target is one resolved latency-probe target. Name is the unique key.
+// Target is one resolved latency-probe target. Name is the unique key. Port is
+// the TCP destination port (only meaningful when Protocol is TCP).
 type Target struct {
 	IP       string `json:"ip"`
 	Name     string `json:"name"`
 	Location string `json:"location"`
 	ISP      string `json:"isp"`
 	Protocol string `json:"protocol"`
+	Port     int    `json:"port"`
 }
 
 type entryLabels struct {
@@ -36,6 +48,7 @@ type entryLabels struct {
 	Location string `yaml:"location,omitempty"`
 	ISP      string `yaml:"isp,omitempty"`
 	Protocol string `yaml:"protocol,omitempty"`
+	Port     int    `yaml:"port,omitempty"`
 }
 
 type fileEntry struct {
@@ -70,7 +83,10 @@ func Load(path string) ([]Target, error) {
 		}
 		seen[name] = true
 
-		protocol := strings.TrimSpace(e.Labels.Protocol)
+		// Normalize the protocol to a canonical upper-case token so a
+		// hand-edited "tcp" is recognized by the agent and groups/filters
+		// consistently on the UI. Empty defaults to ICMP.
+		protocol := strings.ToUpper(strings.TrimSpace(e.Labels.Protocol))
 		if protocol == "" {
 			protocol = "ICMP"
 		}
@@ -80,6 +96,7 @@ func Load(path string) ([]Target, error) {
 			Location: strings.TrimSpace(e.Labels.Location),
 			ISP:      strings.TrimSpace(e.Labels.ISP),
 			Protocol: protocol,
+			Port:     e.Labels.Port,
 		})
 	}
 	return targets, nil
@@ -96,6 +113,7 @@ func Save(path string, targets []Target) error {
 				Location: strings.TrimSpace(t.Location),
 				ISP:      strings.TrimSpace(t.ISP),
 				Protocol: strings.TrimSpace(t.Protocol),
+				Port:     t.Port,
 			},
 		})
 	}

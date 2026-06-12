@@ -168,6 +168,7 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux, webDir string) {
 	h.webDir = webDir
 
 	mux.HandleFunc("/", h.handleIndex)
+	mux.HandleFunc("/api/version", h.handleVersion)
 	mux.HandleFunc("/api/node", h.handleGetNodes)
 	mux.HandleFunc("/api/exec", h.handleExecCommand)
 	mux.HandleFunc("/api/stop", h.handleStopCommand)
@@ -180,6 +181,7 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux, webDir string) {
 	mux.HandleFunc("/api/control/targets", h.handleControlTargets)
 	mux.HandleFunc("/api/status", h.handleStatus)
 	mux.HandleFunc("/api/probes", h.handleProbes)
+	mux.HandleFunc("/api/probes/series", h.handleProbesSeries)
 	mux.HandleFunc("/api/probes/meta", h.handleProbesMeta)
 
 	fs := http.FileServer(http.Dir(webDir))

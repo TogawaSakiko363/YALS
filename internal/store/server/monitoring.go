@@ -150,21 +150,24 @@ type ProbeAggregate struct {
 	LatestMs   float64 `json:"latest_ms"`
 	LatestRecv int     `json:"latest_recv"`
 	AvgMs      float64 `json:"avg_ms"`
+	WorstMs    float64 `json:"worst_ms"`
 	Sent       int     `json:"sent"`
 	Recv       int     `json:"recv"`
 }
 
 // QueryProbeAggregates returns, for one agent and a time window (ts >= sinceTS),
-// each target's latest latency, average latency (over received cycles) and loss
-// inputs (sent/recv totals). Uses window functions to do it in a single pass.
+// each target's latest latency, average and worst (max) latency over received
+// cycles, and loss inputs (sent/recv totals). Uses window functions to do it in a
+// single pass.
 func (s *Store) QueryProbeAggregates(agentName string, sinceTS int64) ([]ProbeAggregate, error) {
 	rows, err := s.db.Query(`
-SELECT target_name, latest_ms, latest_recv, avg_ms, total_sent, total_recv FROM (
+SELECT target_name, latest_ms, latest_recv, avg_ms, worst_ms, total_sent, total_recv FROM (
     SELECT
         target_name,
         FIRST_VALUE(latency_ms) OVER w AS latest_ms,
         FIRST_VALUE(recv) OVER w AS latest_recv,
         AVG(CASE WHEN recv > 0 THEN latency_ms END) OVER (PARTITION BY target_name) AS avg_ms,
+        MAX(CASE WHEN recv > 0 THEN latency_ms END) OVER (PARTITION BY target_name) AS worst_ms,
         SUM(sent) OVER (PARTITION BY target_name) AS total_sent,
         SUM(recv) OVER (PARTITION BY target_name) AS total_recv,
         ROW_NUMBER() OVER w AS rn
@@ -183,14 +186,49 @@ ORDER BY target_name
 	var result []ProbeAggregate
 	for rows.Next() {
 		var a ProbeAggregate
-		var avg sql.NullFloat64
-		if err := rows.Scan(&a.TargetName, &a.LatestMs, &a.LatestRecv, &avg, &a.Sent, &a.Recv); err != nil {
+		var avg, worst sql.NullFloat64
+		if err := rows.Scan(&a.TargetName, &a.LatestMs, &a.LatestRecv, &avg, &worst, &a.Sent, &a.Recv); err != nil {
 			return nil, err
 		}
 		if avg.Valid {
 			a.AvgMs = avg.Float64
 		}
+		if worst.Valid {
+			a.WorstMs = worst.Float64
+		}
 		result = append(result, a)
+	}
+	return result, rows.Err()
+}
+
+// ProbeSeriesPoint is one probe cycle's latency for the row-expansion chart.
+// Recv == 0 marks a fully-lost cycle (no latency), so the UI can break the line.
+type ProbeSeriesPoint struct {
+	TS        int64   `json:"ts"`
+	LatencyMs float64 `json:"latency_ms"`
+	Recv      int     `json:"recv"`
+}
+
+// QueryProbeSeries returns one target's per-cycle latency over a time window for
+// one agent, oldest first, for the latency chart.
+func (s *Store) QueryProbeSeries(agentName, targetName string, sinceTS int64) ([]ProbeSeriesPoint, error) {
+	rows, err := s.db.Query(`
+SELECT ts, latency_ms, recv FROM probe_results
+WHERE agent_name = ? AND target_name = ? AND ts >= ?
+ORDER BY ts ASC
+`, agentName, targetName, sinceTS)
+	if err != nil {
+		return nil, fmt.Errorf("query probe series: %w", err)
+	}
+	defer rows.Close()
+
+	var result []ProbeSeriesPoint
+	for rows.Next() {
+		var p ProbeSeriesPoint
+		if err := rows.Scan(&p.TS, &p.LatencyMs, &p.Recv); err != nil {
+			return nil, err
+		}
+		result = append(result, p)
 	}
 	return result, rows.Err()
 }

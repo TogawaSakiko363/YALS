@@ -96,6 +96,7 @@ type ProbeTargetSpec struct {
 	Location string `json:"location,omitempty"`
 	ISP      string `json:"isp,omitempty"`
 	Protocol string `json:"protocol,omitempty"`
+	Port     int    `json:"port,omitempty"` // TCP destination port; ignored for ICMP
 }
 
 // ProbeConfig is the full latency-probe configuration pushed to an agent. An
