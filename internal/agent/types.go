@@ -30,6 +30,15 @@ type Client struct {
 	activeCommands map[string]*ActiveCommand
 	commandsLock   sync.RWMutex
 
+	// Connection identity from the launch arguments (-s/-p/-u/-t). This is the
+	// single source of truth for how the agent reaches and authenticates to the
+	// server; it is NEVER overwritten by server-pushed config (which carries the
+	// server's own bind address and must not be remotely mutable).
+	bootHost  string
+	bootPort  int
+	bootUUID  string
+	bootToken string
+
 	// sendMu serializes writes to the gRPC stream: command output, metrics and
 	// probe reports are produced by separate goroutines, but a gRPC stream is not
 	// safe for concurrent Send.
@@ -80,5 +89,9 @@ func NewClientWithConfig(agentConfig *config.AgentConfig) *Client {
 		config:         agentConfig,
 		activeCommands: make(map[string]*ActiveCommand),
 		probeReconfig:  make(chan struct{}, 1),
+		bootHost:       agentConfig.Server.Host,
+		bootPort:       agentConfig.Server.Port,
+		bootUUID:       agentConfig.Server.UUID,
+		bootToken:      agentConfig.Server.Token,
 	}
 }

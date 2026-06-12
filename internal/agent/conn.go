@@ -124,7 +124,16 @@ func (c *Client) ConnectToServer() error {
 	if err := json.Unmarshal(handshakeResp.Config, &runtimeConfig); err != nil {
 		return fmt.Errorf("failed to decode runtime config: %w", err)
 	}
-	runtimeConfig.Server.Token = c.config.Server.Token
+	// The connection identity (-s/-p/-u/-t) is authoritative and is never taken
+	// from the server-pushed config: that config carries the SERVER's own bind
+	// address (often unreachable from the agent, e.g. a 0.0.0.0/Docker/proxied
+	// bind), and how the agent reaches/authenticates the server must not be
+	// remotely mutable. Only the operational config (commands, name, group, log
+	// level) is adopted from the server.
+	runtimeConfig.Server.Host = c.bootHost
+	runtimeConfig.Server.Port = c.bootPort
+	runtimeConfig.Server.UUID = c.bootUUID
+	runtimeConfig.Server.Token = c.bootToken
 	c.config = config.NormalizeAgentConfig(&runtimeConfig, nil)
 	plugin.GetManager().SetConfig(c.config)
 
