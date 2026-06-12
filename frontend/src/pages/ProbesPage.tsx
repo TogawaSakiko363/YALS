@@ -14,6 +14,19 @@ interface ProbesPageProps {
 
 const WINDOWS = ['1h', '6h', '12h', '24h'];
 
+type SortKey = 'latest' | 'avg' | 'worst' | 'loss';
+
+// metricValue returns the sortable numeric value of a column for a row, or null
+// when that row has no data for it (null rows always sort to the bottom).
+function metricValue(r: ProbeRow, key: SortKey): number | null {
+  switch (key) {
+    case 'latest': return r.has_latest ? r.latest_ms : null;
+    case 'avg': return r.has_avg ? r.avg_ms : null;
+    case 'worst': return r.has_worst ? r.worst_ms : null;
+    case 'loss': return r.has_data ? r.loss_pct : null;
+  }
+}
+
 function lossClass(loss: number): string {
   if (loss >= 50) return 'probe-loss bad';
   if (loss > 0) return 'probe-loss warn';
@@ -49,6 +62,19 @@ export function ProbesPage({ config }: ProbesPageProps) {
   const [locationFilter, setLocationFilter] = useState('all');
   const [ispFilter, setIspFilter] = useState('all');
   const [protocolFilter, setProtocolFilter] = useState('all');
+
+  // Click-to-sort on the metric columns. null = default (targets.yaml) order.
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('desc');
+    }
+  };
 
   useEffect(() => {
     fetchProbesMeta()
@@ -126,6 +152,19 @@ export function ProbesPage({ config }: ProbesPageProps) {
     [rows, locationFilter, ispFilter, protocolFilter]
   );
 
+  const sortedRows = useMemo(() => {
+    if (!sortKey) return visibleRows;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...visibleRows].sort((a, b) => {
+      const va = metricValue(a, sortKey);
+      const vb = metricValue(b, sortKey);
+      if (va === null && vb === null) return 0;
+      if (va === null) return 1; // no-data rows always last
+      if (vb === null) return -1;
+      return (va - vb) * dir;
+    });
+  }, [visibleRows, sortKey, sortDir]);
+
   return (
     <div className="app-container" style={{ backgroundColor: config.backgroundColor }}>
       <PageHeader config={config} active="probes" />
@@ -177,15 +216,16 @@ export function ProbesPage({ config }: ProbesPageProps) {
                   <th>Location</th>
                   <th>ISP</th>
                   <th>Protocol</th>
-                  <th>Latest</th>
-                  <th>Avg</th>
-                  <th>Worst</th>
-                  <th>Loss</th>
+                  {([['latest', 'Latest'], ['avg', 'Avg'], ['worst', 'Worst'], ['loss', 'Loss']] as [SortKey, string][]).map(([key, label]) => (
+                    <th key={key} className="probes-th-sortable" onClick={() => toggleSort(key)} title={`Sort by ${label}`}>
+                      {label}{sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                    </th>
+                  ))}
                   <th aria-label="Expand"></th>
                 </tr>
               </thead>
               <tbody>
-                {visibleRows.map((r) => {
+                {sortedRows.map((r) => {
                   const isOpen = expanded.has(r.name);
                   return (
                     <Fragment key={r.name}>
@@ -222,7 +262,7 @@ export function ProbesPage({ config }: ProbesPageProps) {
                     </Fragment>
                   );
                 })}
-                {visibleRows.length === 0 && (
+                {sortedRows.length === 0 && (
                   <tr>
                     <td colSpan={9} className="control-table-empty">
                       {rows.length === 0 ? 'No probe data yet for this agent.' : 'No targets match the selected filters.'}

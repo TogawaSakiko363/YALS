@@ -177,6 +177,12 @@ func (c *Client) ConnectToServer() error {
 				logger.Infof("Received probe config: %d targets, interval %ds", len(cfg.Targets), cfg.IntervalSec)
 				c.setProbeConfig(cfg)
 			}
+		case "heartbeat":
+			// Reply in-stream so the agent→server direction also stays warm
+			// through proxies (e.g. Cloudflare) that close idle proxied streams.
+			if err := c.streamSend(stream, &proto.CommandMessage{Type: "heartbeat"}); err != nil {
+				logger.Debugf("heartbeat reply failed: %v", err)
+			}
 		case "disconnect":
 			logger.Infof("Received disconnect request from server")
 			return nil

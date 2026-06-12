@@ -90,10 +90,10 @@ export function LatencyChart({ points, name }: LatencyChartProps) {
     const plotH = Math.max(plotB - plotT, 1);
 
     const { latMin, latMax, tsMin, tsMax } = stats;
-    // 20% headroom above the peak so the highest latency never touches the top.
-    const headroom = latMax > 0 ? latMax * 0.2 : 1;
-    const yMin = latMin;
-    const yMax = latMax + headroom;
+    // Float both bounds by 5% (top above the max, bottom below the min) so the
+    // line never touches the top or bottom edge of the chart.
+    const yMax = latMax > 0 ? latMax * 1.05 : 1;
+    const yMin = latMin * 0.95;
     const ySpan = yMax - yMin || 1;
     const tsSpan = tsMax - tsMin || 1;
 

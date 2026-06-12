@@ -158,7 +158,34 @@ func (h *Handler) StreamCommands(stream proto.AgentService_StreamCommandsServer)
 
 	logger.Infof("Agent stream connected: %s (%s)", agentInfo.Name, uuidValue)
 	h.pushProbeConfigToAgent(uuidValue)
+
+	// Keep the server→agent direction warm with an in-stream heartbeat. Proxies
+	// like Cloudflare close a proxied stream (524) after ~100s with no in-stream
+	// data from the origin; agent metrics only flow agent→server, so without this
+	// the response direction looks idle. The agent replies in-stream too. ctx is
+	// cancelled when the stream ends, stopping the goroutine.
+	go h.runStreamHeartbeat(ctx, uuidValue)
+
 	return h.agentManager.HandleAgentConnection(uuidValue, stream)
+}
+
+// streamHeartbeatInterval must stay comfortably under proxy idle timeouts
+// (Cloudflare ~100s).
+const streamHeartbeatInterval = 30 * time.Second
+
+func (h *Handler) runStreamHeartbeat(ctx context.Context, uuid string) {
+	ticker := time.NewTicker(streamHeartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := h.agentManager.SendToAgent(uuid, &proto.CommandMessage{Type: "heartbeat"}); err != nil {
+				return // stream gone
+			}
+		}
+	}
 }
 
 func (h *Handler) lookupAgentToken(uuidValue string) string {

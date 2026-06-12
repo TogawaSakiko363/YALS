@@ -1449,6 +1449,16 @@ div[ref="terminalRef"] {
   color: #ffffff;
 }
 
+.probes-th-sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.probes-th-sortable:hover {
+  color: #111827;
+}
+
 .probes-expand-button {
   display: inline-flex;
   align-items: center;
