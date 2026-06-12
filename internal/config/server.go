@@ -20,14 +20,6 @@ type Config struct {
 		// server sits behind a trusted reverse proxy that sets these headers;
 		// otherwise clients can spoof them to forge logs or bypass rate limits.
 		TrustProxyHeaders bool `yaml:"trust_proxy_headers"`
-		// MetricsEnabled exposes the Prometheus /metrics endpoint when true.
-		// It is off by default so an upgrade never silently publishes the agent
-		// inventory.
-		MetricsEnabled bool `yaml:"metrics_enabled"`
-		// MetricsToken, when non-empty, requires scrapers to present
-		// "Authorization: Bearer <token>" to read /metrics. When empty the
-		// endpoint is unauthenticated and should be restricted at the network layer.
-		MetricsToken string `yaml:"metrics_token"`
 	} `yaml:"server"`
 
 	Database struct {

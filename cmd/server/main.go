@@ -77,6 +77,10 @@ func main() {
 
 	h := handler.NewHandler(agentManager, store, *runtimeSettings)
 
+	// Load latency-probe targets, wire agent metrics/probe reports to the store,
+	// and start the targets hot-reload watcher + retention pruner.
+	h.InitProbing("targets.yaml")
+
 	// Serve the built-in self-signed certificate. Agents embed and pin the same
 	// certificate, so the server and agents verify each other without any cert
 	// files or fingerprint parameters. Custom certificates are not supported.

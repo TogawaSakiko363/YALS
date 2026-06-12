@@ -7,7 +7,8 @@ server in real time. End users pick a node and a command from a web UI;
 administrators manage nodes and commands from a control panel.
 
 - **Server** — one unified HTTPS endpoint that serves the web UI, a REST API, the
-  Prometheus `/metrics` endpoint, and the gRPC service that agents connect to.
+  built-in monitoring pages (agent status + latency probes), and the gRPC service
+  that agents connect to.
 - **Agent** — connects out to the server over gRPC/TLS, authenticates with a
   UUID + token, receives its allowed command set, and executes commands on demand.
 - **Frontend** — React + Vite + TypeScript, built into static assets the server
@@ -30,7 +31,7 @@ administrators manage nodes and commands from a control panel.
 - [Command templates and plugins](#command-templates-and-plugins)
 - [One-line install (systemd)](#one-line-install-systemd)
 - [HTTP API reference](#http-api-reference)
-- [Observability (Prometheus + Grafana)](#observability-prometheus--grafana)
+- [Monitoring (status + probes)](#monitoring-status--probes)
 - [Security notes](#security-notes)
 
 ---
@@ -43,7 +44,7 @@ administrators manage nodes and commands from a control panel.
   Browser (admin)     ─────▶│   • Looking Glass UI      /        │
                             │   • Control panel         /control │
                             │   • REST API              /api/*    │
-  Prometheus  ── scrape ──▶ │   • Metrics               /metrics  │
+                            │   • Status / Probes       /status  │
                             │   • gRPC (agent channel)           │◀─ gRPC/TLS ─ Agent #1
                             │   • SQLite (agents, settings)      │◀─ gRPC/TLS ─ Agent #2
                             └──────────────────────────────────┘◀─ gRPC/TLS ─ Agent #N
@@ -69,16 +70,17 @@ end user ──POST /api/exec──▶ server ──gRPC stream──▶ agent �
 ```
 cmd/server/        Server entrypoint (main.go)
 cmd/agent/         Agent entrypoint (main.go)
-internal/agent/    Agent manager, gRPC connection, command execution
-internal/handler/  HTTP handlers, REST API, control panel, /metrics
+internal/agent/    Agent manager, gRPC connection, command execution,
+                     system-metrics collection, latency probing
+internal/handler/  HTTP handlers, REST API, control panel, monitoring APIs
 internal/plugin/   Plugin framework + built-in agent plugins
                      (mtr, tcping, udping, speedtest, geekbench6)
-internal/store/    SQLite persistence (agents, runtime settings)
+internal/probe/    targets.yaml schema, loading and hot-reload
+internal/store/    SQLite persistence (agents, settings, metrics, probe results)
 internal/config/   Config structs and loaders
-internal/tls/      Self-signed certificate generation
+internal/tls/      Built-in certificate
 internal/proto/    Hand-written gRPC service (JSON codec)
 frontend/          React + Vite + TypeScript web UI (builds into ../web)
-docs/              Prometheus + Grafana integration guide and dashboard
 install_server.sh  Build-from-source installer/updater for the server (systemd)
 install_agent.sh   Build-from-source installer/updater for the agent (systemd)
 config.yaml        Sample server configuration
@@ -176,8 +178,6 @@ server:
   password: "your_password"          # control-panel login password
   log_level: "info"                  # debug | info | warn | error
   trust_proxy_headers: false         # honor X-Real-IP / X-Forwarded-For only behind a trusted proxy
-  metrics_enabled: false             # expose Prometheus /metrics
-  metrics_token: ""                  # optional bearer token for /metrics
 
 database:
   path: "./data/yals.db"             # SQLite database (auto-created)
@@ -188,9 +188,10 @@ database:
 | `server.host` / `server.port` | Bind address and unified HTTPS/gRPC port |
 | `server.password` | Password for the `/control` panel |
 | `server.trust_proxy_headers` | When `true`, derive client IP from `X-Real-IP` / `X-Forwarded-For` (only enable behind a trusted reverse proxy) |
-| `server.metrics_enabled` | Enable the `/metrics` endpoint (off by default) |
-| `server.metrics_token` | If set, scrapers must send `Authorization: Bearer <token>` |
 | `database.path` | SQLite file path |
+
+Latency-probe targets are configured separately in `targets.yaml` (editable from
+the control panel — see [Monitoring](#monitoring-status--probes)).
 
 ---
 
@@ -341,7 +342,9 @@ Public (looking glass):
 | GET | `/api/node?session_id=…` | Nodes, groups, and counts |
 | POST | `/api/exec?session_id=…` | Execute a command; streams output via SSE |
 | POST | `/api/stop?session_id=…` | Stop a running command |
-| GET | `/metrics` | Prometheus metrics (when enabled) |
+| GET | `/api/status?session_id=…` | Latest system metrics for all agents |
+| GET | `/api/probes?session_id=…&agent=&group=&window=` | Aggregated latency table |
+| GET | `/api/probes/meta?session_id=…` | Agents + grouping values for the Probes UI |
 
 The `session_id` is generated client-side (format `session_<uuid>`); it
 correlates a command with its live output and stop signal.
@@ -356,19 +359,29 @@ Control panel (require `Authorization: Bearer <token>` from `/api/control/login`
 | PUT / DELETE | `/api/control/agents/{uuid}` | Update / delete an agent |
 | GET / PUT | `/api/control/runtime` | Get / set runtime settings (rate limit, gRPC keepalive) |
 | GET | `/api/control/plugins` | List built-in plugins and their override metadata |
+| GET / PUT | `/api/control/targets` | Read / write the probe interval + `targets.yaml` |
 
 ---
 
-## Observability (Prometheus + Grafana)
+## Monitoring (status + probes)
 
-Enable metrics in `config.yaml` (`metrics_enabled: true`, optional
-`metrics_token`), then scrape `https://<server>:<port>/metrics`. Exposed gauges
-include `yals_agents_total/online/offline`, `yals_agent_up{…}`, last‑connected
-and first‑seen timestamps, and command counts per agent.
+YALS has a built-in monitoring subsystem (no external Prometheus/Grafana needed):
 
-A ready Prometheus scrape config, a Grafana provisioning setup, and an importable
-dashboard live in [`docs/`](docs/) — see [`docs/prometheus.md`](docs/prometheus.md)
-and [`docs/grafana.md`](docs/grafana.md).
+- **Status** (`/status`) — a live card per agent showing CPU, memory and disk
+  usage, network up/down bandwidth, and cumulative up/down traffic. Agents
+  collect these (via gopsutil) and report them over the existing gRPC stream;
+  the latest snapshot per agent is stored in SQLite.
+- **Probes** (`/probes`) — a latency table. Each agent periodically ICMP-pings the
+  targets defined in `targets.yaml` and reports latest latency, average latency
+  and packet loss. Pick a vantage **agent** and a **group** (All / Location / ISP
+  / Protocol) on the left, and a **time window** (1h / 6h / 12h / 24h) on the
+  right. Probe results are retained for 24h.
+
+`targets.yaml` is the single source of probe targets — each entry has one or more
+IPs and a `labels` block (`name`, `location`, `isp`, `protocol`). `name` is the
+unique tracking key: rename or remove a target and its old data is purged
+immediately. Edit it visually from the control panel's **Monitoring** section; the
+server hot-reloads it and pushes the new config to all online agents.
 
 ---
 
@@ -388,8 +401,6 @@ and [`docs/grafana.md`](docs/grafana.md).
   time.
 - **Rate limiting:** `/api/exec` is rate‑limited per real client IP. Only enable
   `trust_proxy_headers` behind a reverse proxy you control.
-- **Public surface:** the looking glass executes only admin‑defined commands, with
-  targets validated as IP/domain, but it is unauthenticated by design — restrict
-  network access if needed.
-- **`/metrics`** is off by default and exposes agent inventory; protect it with
-  `metrics_token` or the network layer.
+- **Public surface:** the looking glass and the status/probes pages are
+  unauthenticated by design (they execute only admin‑defined commands, with
+  targets validated as IP/domain) — restrict network access if needed.

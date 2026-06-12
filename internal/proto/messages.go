@@ -55,16 +55,68 @@ type CommandInfo struct {
 }
 
 // CommandMessage is used for bidirectional streaming.
+//
+// Beyond command execution it also carries the monitoring messages, whose
+// type-specific payload travels in Data:
+//   - "metrics_report" (agent→server): Data is a SystemMetrics
+//   - "probe_config"   (server→agent): Data is a ProbeConfig
+//   - "probe_report"   (agent→server): Data is a ProbeBatch
 type CommandMessage struct {
-	Type        string `json:"type"`
-	CommandName string `json:"command_name,omitempty"`
-	Target      string `json:"target,omitempty"`
-	CommandID   string `json:"command_id,omitempty"`
-	IPVersion   string `json:"ip_version,omitempty"`
-	Output      string `json:"output,omitempty"`
-	Error       string `json:"error,omitempty"`
-	IsComplete  bool   `json:"is_complete,omitempty"`
-	IsError     bool   `json:"is_error,omitempty"`
+	Type        string          `json:"type"`
+	CommandName string          `json:"command_name,omitempty"`
+	Target      string          `json:"target,omitempty"`
+	CommandID   string          `json:"command_id,omitempty"`
+	IPVersion   string          `json:"ip_version,omitempty"`
+	Output      string          `json:"output,omitempty"`
+	Error       string          `json:"error,omitempty"`
+	IsComplete  bool            `json:"is_complete,omitempty"`
+	IsError     bool            `json:"is_error,omitempty"`
+	Data        json.RawMessage `json:"data,omitempty"`
+}
+
+// SystemMetrics is one snapshot of an agent host's resource usage. Bandwidth
+// fields are bytes/sec; total fields are cumulative bytes since the agent started.
+type SystemMetrics struct {
+	CPUPercent   float64 `json:"cpu_percent"`
+	MemUsed      uint64  `json:"mem_used"`
+	MemTotal     uint64  `json:"mem_total"`
+	DiskUsed     uint64  `json:"disk_used"`
+	DiskTotal    uint64  `json:"disk_total"`
+	NetUpRate    float64 `json:"net_up_rate"`
+	NetDownRate  float64 `json:"net_down_rate"`
+	NetUpTotal   uint64  `json:"net_up_total"`
+	NetDownTotal uint64  `json:"net_down_total"`
+	UptimeSec    uint64  `json:"uptime_sec"`
+}
+
+// ProbeTargetSpec is one latency-probe target pushed to an agent.
+type ProbeTargetSpec struct {
+	IP       string `json:"ip"`
+	Name     string `json:"name"`
+	Location string `json:"location,omitempty"`
+	ISP      string `json:"isp,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
+}
+
+// ProbeConfig is the full latency-probe configuration pushed to an agent. An
+// empty Targets slice tells the agent to stop probing.
+type ProbeConfig struct {
+	IntervalSec int               `json:"interval_sec"`
+	Targets     []ProbeTargetSpec `json:"targets"`
+}
+
+// ProbeResult is one target's result for a single probe cycle.
+type ProbeResult struct {
+	Name      string  `json:"name"`
+	LatencyMs float64 `json:"latency_ms"` // average RTT of the cycle; 0 when Recv == 0
+	Sent      int     `json:"sent"`
+	Recv      int     `json:"recv"`
+}
+
+// ProbeBatch is one probe cycle's results reported by an agent.
+type ProbeBatch struct {
+	TS      int64         `json:"ts"` // unix seconds
+	Results []ProbeResult `json:"results"`
 }
 
 // Marshal implements custom marshaling for JSON codec.

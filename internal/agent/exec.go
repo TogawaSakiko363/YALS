@@ -380,6 +380,15 @@ func (c *Client) isComplexCommand(fullCommand string) bool {
 	return false
 }
 
+// streamSend serializes all writes to the gRPC stream. command output, metrics
+// reports and probe reports come from different goroutines, and a gRPC stream is
+// not safe for concurrent Send.
+func (c *Client) streamSend(stream proto.AgentService_StreamCommandsClient, msg *proto.CommandMessage) error {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	return stream.Send(msg)
+}
+
 // sendOutputGRPC sends command output via gRPC stream
 func (c *Client) sendOutputGRPC(stream proto.AgentService_StreamCommandsClient, commandID, output string, isError bool) {
 	msg := &proto.CommandMessage{
@@ -388,7 +397,7 @@ func (c *Client) sendOutputGRPC(stream proto.AgentService_StreamCommandsClient, 
 		Output:    output,
 		IsError:   isError,
 	}
-	if err := stream.Send(msg); err != nil {
+	if err := c.streamSend(stream, msg); err != nil {
 		logger.Errorf("Failed to send output: %v", err)
 	}
 }
@@ -401,7 +410,7 @@ func (c *Client) sendErrorGRPC(stream proto.AgentService_StreamCommandsClient, c
 		Error:     errorMsg,
 		IsError:   true,
 	}
-	if err := stream.Send(msg); err != nil {
+	if err := c.streamSend(stream, msg); err != nil {
 		logger.Errorf("Failed to send error: %v", err)
 	}
 }
@@ -413,7 +422,7 @@ func (c *Client) sendCompletionGRPC(stream proto.AgentService_StreamCommandsClie
 		CommandID:  commandID,
 		IsComplete: true,
 	}
-	if err := stream.Send(msg); err != nil {
+	if err := c.streamSend(stream, msg); err != nil {
 		logger.Errorf("Failed to send completion: %v", err)
 	}
 }

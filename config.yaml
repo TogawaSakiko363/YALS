@@ -13,12 +13,6 @@ server:
   # X-Forwarded-For. When false (default) the real connection address is used for
   # logging and rate limiting, preventing clients from spoofing these headers.
   trust_proxy_headers: false
-  # Prometheus metrics. When metrics_enabled is true the server exposes a
-  # /metrics endpoint aggregating the status of all agents (pull/scrape model).
-  # If metrics_token is set, scrapers must send "Authorization: Bearer <token>";
-  # otherwise restrict the endpoint at the network layer.
-  metrics_enabled: false
-  metrics_token: ""
 
 # Database settings
 database:

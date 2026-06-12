@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"YALS/internal/agent"
 	"YALS/internal/config"
 	"YALS/internal/logger"
+	"YALS/internal/probe"
 	"YALS/internal/proto"
 	serverstore "YALS/internal/store/server"
 
@@ -37,6 +39,14 @@ type Handler struct {
 	controlSessions sync.Map
 	runtimeMu       sync.RWMutex
 	runtimeSettings config.RuntimeSettings
+
+	// Latency-probe state. targets.yaml is the source of truth; the loaded set and
+	// interval are pushed to agents and used to render the Probes/Monitoring APIs.
+	probeMu       sync.RWMutex
+	probeTargets  []probe.Target
+	probeInterval int
+	probePath     string
+	probeModTime  time.Time
 }
 
 // NewHandler creates a new handler
@@ -141,7 +151,8 @@ func (h *Handler) StreamCommands(stream proto.AgentService_StreamCommandsServer)
 	defer h.agentManager.UnregisterAgentStream(uuidValue)
 
 	logger.Infof("Agent stream connected: %s (%s)", agentInfo.Name, uuidValue)
-	return h.agentManager.HandleAgentConnection(stream)
+	h.pushProbeConfigToAgent(uuidValue)
+	return h.agentManager.HandleAgentConnection(uuidValue, stream)
 }
 
 func (h *Handler) lookupAgentToken(uuidValue string) string {
@@ -166,7 +177,10 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux, webDir string) {
 	mux.HandleFunc("/api/control/agents/", h.handleControlAgentByUUID)
 	mux.HandleFunc("/api/control/runtime", h.handleControlRuntime)
 	mux.HandleFunc("/api/control/plugins", h.handleControlPlugins)
-	mux.HandleFunc("/metrics", h.handleMetrics)
+	mux.HandleFunc("/api/control/targets", h.handleControlTargets)
+	mux.HandleFunc("/api/status", h.handleStatus)
+	mux.HandleFunc("/api/probes", h.handleProbes)
+	mux.HandleFunc("/api/probes/meta", h.handleProbesMeta)
 
 	fs := http.FileServer(http.Dir(webDir))
 	mux.Handle("/assets/", fs)

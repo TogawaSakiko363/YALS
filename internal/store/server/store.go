@@ -110,6 +110,32 @@ func (s *Store) initSchema() error {
 			value_json TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS agent_metrics (
+			agent_uuid TEXT PRIMARY KEY,
+			updated_at TEXT NOT NULL,
+			cpu_percent REAL NOT NULL DEFAULT 0,
+			mem_used INTEGER NOT NULL DEFAULT 0,
+			mem_total INTEGER NOT NULL DEFAULT 0,
+			disk_used INTEGER NOT NULL DEFAULT 0,
+			disk_total INTEGER NOT NULL DEFAULT 0,
+			net_up_rate REAL NOT NULL DEFAULT 0,
+			net_down_rate REAL NOT NULL DEFAULT 0,
+			net_up_total INTEGER NOT NULL DEFAULT 0,
+			net_down_total INTEGER NOT NULL DEFAULT 0,
+			uptime_sec INTEGER NOT NULL DEFAULT 0
+		);`,
+		`CREATE TABLE IF NOT EXISTS probe_results (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			agent_uuid TEXT NOT NULL,
+			agent_name TEXT NOT NULL,
+			target_name TEXT NOT NULL,
+			ts INTEGER NOT NULL,
+			latency_ms REAL NOT NULL DEFAULT 0,
+			sent INTEGER NOT NULL DEFAULT 0,
+			recv INTEGER NOT NULL DEFAULT 0
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_probe_results_query ON probe_results(agent_name, ts);`,
+		`CREATE INDEX IF NOT EXISTS idx_probe_results_target ON probe_results(target_name);`,
 	}
 
 	for _, stmt := range statements {

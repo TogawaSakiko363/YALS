@@ -126,3 +126,51 @@ export interface PluginInfo {
   maximum_queue: number;
   maximum_queue_overridden: boolean;
 }
+
+export interface AgentSystemMetrics {
+  updated_at: string;
+  cpu_percent: number;
+  mem_used: number;
+  mem_total: number;
+  disk_used: number;
+  disk_total: number;
+  net_up_rate: number;
+  net_down_rate: number;
+  net_up_total: number;
+  net_down_total: number;
+  uptime_sec: number;
+}
+
+export interface StatusItem {
+  uuid: string;
+  name: string;
+  group: string;
+  online: boolean;
+  metrics?: AgentSystemMetrics;
+}
+
+export interface ProbeRow {
+  name: string;
+  location: string;
+  isp: string;
+  protocol: string;
+  has_data: boolean;
+  latest_ms: number;
+  has_latest: boolean;
+  avg_ms: number;
+  has_avg: boolean;
+  loss_pct: number;
+}
+
+export interface ProbeTarget {
+  ip: string;
+  name: string;
+  location: string;
+  isp: string;
+  protocol: string;
+}
+
+export interface ProbeConfigPayload {
+  interval_sec: number;
+  targets: ProbeTarget[];
+}

@@ -115,6 +115,13 @@ func (c *Client) ConnectToServer() error {
 		return fmt.Errorf("failed to create stream: %w", err)
 	}
 
+	// Background reporters live for the lifetime of this connection; cancelling on
+	// return stops them when the stream drops.
+	monitorCtx, cancelMonitors := context.WithCancel(context.Background())
+	defer cancelMonitors()
+	go c.runMetricsReporter(monitorCtx, stream)
+	go c.runProbeLoop(monitorCtx, stream)
+
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
@@ -131,6 +138,14 @@ func (c *Client) ConnectToServer() error {
 			go c.executeCommandGRPC(stream, msg)
 		case "stop_command":
 			c.stopCommand(msg.CommandID)
+		case "probe_config":
+			var cfg proto.ProbeConfig
+			if err := json.Unmarshal(msg.Data, &cfg); err != nil {
+				logger.Warnf("Failed to decode probe config: %v", err)
+			} else {
+				logger.Infof("Received probe config: %d targets, interval %ds", len(cfg.Targets), cfg.IntervalSec)
+				c.setProbeConfig(cfg)
+			}
 		case "disconnect":
 			logger.Infof("Received disconnect request from server")
 			return nil

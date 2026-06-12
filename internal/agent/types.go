@@ -1,10 +1,12 @@
 package agent
 
 import (
-	"YALS/internal/config"
-	"YALS/internal/plugin"
 	"os/exec"
 	"sync"
+
+	"YALS/internal/config"
+	"YALS/internal/plugin"
+	"YALS/internal/proto"
 )
 
 // Shell operators that require bash execution
@@ -27,6 +29,16 @@ type Client struct {
 	config         *config.AgentConfig
 	activeCommands map[string]*ActiveCommand
 	commandsLock   sync.RWMutex
+
+	// sendMu serializes writes to the gRPC stream: command output, metrics and
+	// probe reports are produced by separate goroutines, but a gRPC stream is not
+	// safe for concurrent Send.
+	sendMu sync.Mutex
+
+	// probe configuration pushed by the server (hot-reloadable).
+	probeMu       sync.Mutex
+	probeCfg      proto.ProbeConfig
+	probeReconfig chan struct{}
 }
 
 // CommandRequest represents a command request from the server
@@ -67,5 +79,6 @@ func NewClientWithConfig(agentConfig *config.AgentConfig) *Client {
 	return &Client{
 		config:         agentConfig,
 		activeCommands: make(map[string]*ActiveCommand),
+		probeReconfig:  make(chan struct{}, 1),
 	}
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Agent, AgentCommand, AgentConfigPayload, AgentConfigRecord, CommandResponse, CommandType, CommandHistory, AgentGroupData, CommandConfig, ControlSessionResponse, IPVersion, RuntimeSettings, PluginInfo } from '../types/yals';
+import { Agent, AgentCommand, AgentConfigPayload, AgentConfigRecord, CommandResponse, CommandType, CommandHistory, AgentGroupData, CommandConfig, ControlSessionResponse, IPVersion, RuntimeSettings, PluginInfo, StatusItem, ProbeRow, ProbeConfigPayload } from '../types/yals';
 
 interface UseYalsClientOptions {
   serverUrl?: string;
@@ -70,6 +70,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
   const [isControlAuthenticated, setIsControlAuthenticated] = useState<boolean>(() => !!sessionStorage.getItem('yals_control_token'));
   const [managedAgents, setManagedAgents] = useState<AgentConfigRecord[]>([]);
   const [availablePlugins, setAvailablePlugins] = useState<PluginInfo[]>([]);
+  const [nodeStatuses, setNodeStatuses] = useState<Map<string, boolean>>(new Map());
   const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>(defaultRuntimeSettings);
 
   const reconnectAttemptsRef = useRef(0);
@@ -426,6 +427,12 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     return data;
   }, [buildHeaders, protocol, serverUrl]);
 
+  const logoutControl = useCallback(() => {
+    sessionStorage.removeItem('yals_control_token');
+    setControlToken(null);
+    setIsControlAuthenticated(false);
+  }, []);
+
   const validateControlSession = useCallback(async () => {
     const token = controlToken || sessionStorage.getItem('yals_control_token');
     if (!token) {
@@ -486,6 +493,98 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     const data = await response.json() as PluginInfo[];
     setAvailablePlugins(data);
     return data;
+  }, [buildHeaders, controlHeaders, protocol, serverUrl]);
+
+  // Best-effort live online status for the control panel agent table. Reuses the
+  // public node endpoint (a client-generated session id, like the looking glass),
+  // and maps agent name -> online. On any failure the map is left empty and the
+  // table simply shows an unknown status.
+  const fetchAgentStatuses = useCallback(async () => {
+    const sessionIdValue = sessionId || sessionStorage.getItem('yals_session_id') || createSessionId();
+    sessionStorage.setItem('yals_session_id', sessionIdValue);
+
+    const response = await fetch(`${protocol}//${serverUrl}/api/node?session_id=${sessionIdValue}`, {
+      method: 'GET',
+      headers: buildHeaders({ Accept: 'application/json' })
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch node statuses: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const statuses = new Map<string, boolean>();
+    if (Array.isArray(data.groups)) {
+      data.groups.forEach((group: { agents?: Agent[] }) => {
+        (group.agents || []).forEach((agent) => {
+          statuses.set(agent.name, agent.status === 1);
+        });
+      });
+    }
+    setNodeStatuses(statuses);
+    return statuses;
+  }, [buildHeaders, protocol, serverUrl, sessionId]);
+
+  const publicSession = useCallback((): string => {
+    const sid = sessionId || sessionStorage.getItem('yals_session_id') || createSessionId();
+    sessionStorage.setItem('yals_session_id', sid);
+    return sid;
+  }, [sessionId]);
+
+  const fetchStatus = useCallback(async (): Promise<StatusItem[]> => {
+    const response = await fetch(`${protocol}//${serverUrl}/api/status?session_id=${publicSession()}`, {
+      method: 'GET',
+      headers: buildHeaders({ Accept: 'application/json' })
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch status: ${response.status}`);
+    }
+    return await response.json() as StatusItem[];
+  }, [buildHeaders, protocol, serverUrl, publicSession]);
+
+  const fetchProbesMeta = useCallback(async (): Promise<{ agents: string[] }> => {
+    const response = await fetch(`${protocol}//${serverUrl}/api/probes/meta?session_id=${publicSession()}`, {
+      method: 'GET',
+      headers: buildHeaders({ Accept: 'application/json' })
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch probe meta: ${response.status}`);
+    }
+    return await response.json() as { agents: string[] };
+  }, [buildHeaders, protocol, serverUrl, publicSession]);
+
+  const fetchProbes = useCallback(async (agent: string, group: string, window: string): Promise<{ agent: string; rows: ProbeRow[] }> => {
+    const params = new URLSearchParams({ session_id: publicSession(), agent, group, window });
+    const response = await fetch(`${protocol}//${serverUrl}/api/probes?${params.toString()}`, {
+      method: 'GET',
+      headers: buildHeaders({ Accept: 'application/json' })
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch probes: ${response.status}`);
+    }
+    return await response.json() as { agent: string; rows: ProbeRow[] };
+  }, [buildHeaders, protocol, serverUrl, publicSession]);
+
+  const fetchProbeTargets = useCallback(async (): Promise<ProbeConfigPayload> => {
+    const response = await fetch(`${protocol}//${serverUrl}/api/control/targets`, {
+      method: 'GET',
+      headers: buildHeaders({ Accept: 'application/json', ...controlHeaders() })
+    });
+    if (!response.ok) {
+      throw new Error('获取测试目标失败');
+    }
+    return await response.json() as ProbeConfigPayload;
+  }, [buildHeaders, controlHeaders, protocol, serverUrl]);
+
+  const saveProbeTargets = useCallback(async (payload: ProbeConfigPayload): Promise<ProbeConfigPayload> => {
+    const response = await fetch(`${protocol}//${serverUrl}/api/control/targets`, {
+      method: 'PUT',
+      headers: buildHeaders({ 'Content-Type': 'application/json', ...controlHeaders() }),
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      throw new Error((await response.text()) || '保存测试目标失败');
+    }
+    return await response.json() as ProbeConfigPayload;
   }, [buildHeaders, controlHeaders, protocol, serverUrl]);
 
   const fetchRuntimeSettings = useCallback(async () => {
@@ -592,11 +691,19 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     isControlAuthenticated,
     managedAgents,
     availablePlugins,
+    nodeStatuses,
     runtimeSettings,
     loginControl,
+    logoutControl,
     validateControlSession,
     listManagedAgents,
     listPlugins,
+    fetchAgentStatuses,
+    fetchStatus,
+    fetchProbes,
+    fetchProbesMeta,
+    fetchProbeTargets,
+    saveProbeTargets,
     fetchRuntimeSettings,
     saveRuntimeSettings,
     saveManagedAgent,

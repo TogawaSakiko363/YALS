@@ -145,11 +145,13 @@ type AgentConfigResponse struct {
 
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
-	case "/", "/index", "/index.html":
+	case "/", "/index", "/index.html",
+		"/control", "/control/", "/control.html",
+		"/status", "/status/", "/status.html",
+		"/probes", "/probes/", "/probes.html":
+		// Single-page app: every client-side route is served the same
+		// index.html, which dispatches on window.location.pathname.
 		http.ServeFile(w, r, filepath.Join(h.webDir, "index.html"))
-		return
-	case "/control", "/control/", "/control.html":
-		http.ServeFile(w, r, filepath.Join(h.webDir, "control.html"))
 		return
 	default:
 		filePath := filepath.Join(h.webDir, r.URL.Path[1:])
@@ -631,6 +633,7 @@ func (h *Handler) handleControlDeleteAgent(w http.ResponseWriter, uuidValue stri
 	}
 
 	_ = h.agentManager.DisconnectAgent(uuidValue)
+	_ = h.store.DeleteAgentMetrics(uuidValue)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"success": true})

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -38,6 +39,18 @@ type Agent struct {
 	commandsLock      sync.RWMutex
 	runningCommands   map[string]int
 	runningLock       sync.Mutex
+	sendMu            sync.Mutex
+}
+
+// sendLocked serializes server→agent stream writes (command dispatch, reload,
+// disconnect and probe-config push can be issued from different goroutines).
+func (a *Agent) sendLocked(msg *proto.CommandMessage) error {
+	a.sendMu.Lock()
+	defer a.sendMu.Unlock()
+	if a.stream == nil {
+		return fmt.Errorf("agent stream unavailable")
+	}
+	return a.stream.Send(msg)
 }
 
 // AgentRegistration contains server-side metadata used when attaching a live stream.
@@ -63,6 +76,10 @@ type Manager struct {
 	agentsLock         sync.RWMutex
 	outputHandlers     map[string]chan CommandOutput
 	outputHandlersLock sync.RWMutex
+
+	// Monitoring report sinks, wired by the HTTP handler to the store.
+	metricsHandler func(uuid string, m proto.SystemMetrics)
+	probeHandler   func(uuid string, batch proto.ProbeBatch)
 }
 
 // NewManager creates a new agent manager
@@ -74,18 +91,73 @@ func NewManager() *Manager {
 	}
 }
 
-// HandleAgentConnection handles a new agent gRPC stream connection
-func (m *Manager) HandleAgentConnection(stream proto.AgentService_StreamCommandsServer) error {
+// SetReportHandlers registers sinks for agent metrics and probe reports.
+func (m *Manager) SetReportHandlers(metrics func(uuid string, m proto.SystemMetrics), probe func(uuid string, batch proto.ProbeBatch)) {
+	m.metricsHandler = metrics
+	m.probeHandler = probe
+}
+
+// HandleAgentConnection handles a new agent gRPC stream connection for uuid.
+func (m *Manager) HandleAgentConnection(uuid string, stream proto.AgentService_StreamCommandsServer) error {
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
 			return err
 		}
 
-		if msg.Type == "command_output" {
+		switch msg.Type {
+		case "command_output":
 			m.handleCommandOutputProto(msg)
+		case "metrics_report":
+			if m.metricsHandler != nil && len(msg.Data) > 0 {
+				var sm proto.SystemMetrics
+				if err := json.Unmarshal(msg.Data, &sm); err == nil {
+					m.metricsHandler(uuid, sm)
+				}
+			}
+		case "probe_report":
+			if m.probeHandler != nil && len(msg.Data) > 0 {
+				var batch proto.ProbeBatch
+				if err := json.Unmarshal(msg.Data, &batch); err == nil {
+					m.probeHandler(uuid, batch)
+				}
+			}
 		}
 	}
+}
+
+// SendToAgent sends a message on a connected agent's stream.
+func (m *Manager) SendToAgent(uuid string, msg *proto.CommandMessage) error {
+	m.agentsLock.RLock()
+	agent, exists := m.agentsByUUID[uuid]
+	m.agentsLock.RUnlock()
+	if !exists || agent == nil || agent.stream == nil {
+		return fmt.Errorf("agent not connected: %s", uuid)
+	}
+	return agent.sendLocked(msg)
+}
+
+// OnlineAgentUUIDs returns the UUIDs of all currently connected agents.
+func (m *Manager) OnlineAgentUUIDs() []string {
+	m.agentsLock.RLock()
+	defer m.agentsLock.RUnlock()
+	uuids := make([]string, 0, len(m.agentsByUUID))
+	for uuid, agent := range m.agentsByUUID {
+		if agent.Status() == StatusConnected {
+			uuids = append(uuids, uuid)
+		}
+	}
+	return uuids
+}
+
+// NameByUUID returns an agent's display name for the given UUID.
+func (m *Manager) NameByUUID(uuid string) string {
+	m.agentsLock.RLock()
+	defer m.agentsLock.RUnlock()
+	if agent, ok := m.agentsByUUID[uuid]; ok {
+		return agent.Name
+	}
+	return ""
 }
 
 // RegisterAgent registers or updates agent metadata from server persistence.
@@ -146,7 +218,7 @@ func (m *Manager) ReloadAgent(uuid string) error {
 	if !exists || agent == nil || agent.stream == nil {
 		return nil
 	}
-	return agent.stream.Send(&proto.CommandMessage{Type: "reload_config"})
+	return agent.sendLocked(&proto.CommandMessage{Type: "reload_config"})
 }
 
 // DisconnectAgent forces an online agent to disconnect and removes it from memory.
@@ -158,14 +230,13 @@ func (m *Manager) DisconnectAgent(uuid string) error {
 		return nil
 	}
 
-	stream := agent.stream
 	name := agent.Name
 	delete(m.agentsByUUID, uuid)
 	delete(m.agents, name)
 	m.agentsLock.Unlock()
 
-	if stream != nil {
-		_ = stream.Send(&proto.CommandMessage{Type: "disconnect"})
+	if agent.stream != nil {
+		_ = agent.sendLocked(&proto.CommandMessage{Type: "disconnect"})
 	}
 
 	return nil
@@ -361,55 +432,6 @@ func (m *Manager) GetAgentStats() map[string]any {
 		"online":  online,
 		"offline": offline,
 	}
-}
-
-// AgentMetric is a raw, structured snapshot of a single agent's state intended
-// for metrics export (unlike buildAgentInfo, which formats values for the UI).
-type AgentMetric struct {
-	UUID            string
-	Name            string
-	Group           string
-	Location        string
-	Datacenter      string
-	Online          bool
-	FirstSeen       time.Time
-	LastConnected   time.Time
-	CommandCount    int
-	RunningCommands int
-}
-
-// GetAgentMetrics returns a raw snapshot of every agent for metrics export.
-func (m *Manager) GetAgentMetrics() []AgentMetric {
-	m.agentsLock.RLock()
-	defer m.agentsLock.RUnlock()
-
-	metrics := make([]AgentMetric, 0, len(m.agents))
-	for _, agent := range m.agents {
-		agent.commandsLock.RLock()
-		commandCount := len(agent.availableCommands)
-		agent.commandsLock.RUnlock()
-
-		agent.runningLock.Lock()
-		running := 0
-		for _, count := range agent.runningCommands {
-			running += count
-		}
-		agent.runningLock.Unlock()
-
-		metrics = append(metrics, AgentMetric{
-			UUID:            agent.UUID,
-			Name:            agent.Name,
-			Group:           agent.Group,
-			Location:        agent.Details.Location,
-			Datacenter:      agent.Details.Datacenter,
-			Online:          agent.Status() == StatusConnected,
-			FirstSeen:       agent.firstSeen,
-			LastConnected:   agent.lastConnected,
-			CommandCount:    commandCount,
-			RunningCommands: running,
-		})
-	}
-	return metrics
 }
 
 // CleanupOfflineAgents removes agents that have been offline for more than the specified duration.

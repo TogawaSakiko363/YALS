@@ -1,0 +1,550 @@
+# China
+  # 广东
+    - targets:
+        - 116.6.240.1
+      labels:
+        name: '东莞电信 AS4809'
+        location: '广东'
+        isp: '中国电信'
+        protocol: 'ICMP'
+
+    - targets:
+        - 113.102.192.1
+      labels:
+        name: '东莞电信 AS4134'
+        location: '广东'
+        isp: '中国电信'
+        protocol: 'ICMP'
+
+    - targets:
+        - 113.76.97.1
+      labels:
+        name: '珠海电信 AS4134'
+        location: '广东'
+        isp: '中国电信'
+        protocol: 'ICMP'
+
+    - targets:
+        - 120.239.204.254
+      labels:
+        name: '珠海移动 AS56040-AS9808'
+        location: '广东'
+        isp: '中国移动'
+        protocol: 'ICMP'
+
+    - targets:
+        - 120.236.192.1
+      labels:
+        name: '广州移动 AS56040-AS9808'
+        location: '广东'
+        isp: '中国移动'
+        protocol: 'ICMP'
+
+    - targets:
+        - 120.236.114.1
+      labels:
+        name: '广州移动 AS9808-AS58807'
+        location: '广东'
+        isp: '中国移动'
+        protocol: 'ICMP'
+
+    - targets:
+        - 27.42.176.1
+      labels:
+        name: '中山联通 AS17816-AS4837'
+        location: '广东'
+        isp: '中国联通'
+        protocol: 'ICMP'
+
+    - targets:
+        - 58.248.163.1
+      labels:
+        name: '广州联通 AS17622-AS4837'
+        location: '广东'
+        isp: '中国联通'
+        protocol: 'ICMP'
+
+    - targets:
+        - 202.38.193.33
+      labels:
+        name: '华南理工大学 AS4538'
+        location: '广东'
+        isp: '教育网'
+        protocol: 'ICMP'
+
+
+  # 上海
+    - targets:
+        - 58.32.24.1
+      labels:
+        name: '上海电信 AS4812-AS4809'
+        location: '上海'
+        isp: '中国电信'
+        protocol: 'ICMP'
+
+    - targets:
+        - 101.226.23.1
+      labels:
+        name: '上海电信 AS4812-AS4134'
+        location: '上海'
+        isp: '中国电信'
+        protocol: 'ICMP'
+
+    - targets:
+        - 117.186.87.197
+      labels:
+        name: '上海移动 AS24400-AS9808'
+        location: '上海'
+        isp: '中国移动'
+        protocol: 'ICMP'
+
+    - targets:
+        - 223.166.234.1
+      labels:
+        name: '上海联通 AS17621-AS4837'
+        location: '上海'
+        isp: '中国联通'
+        protocol: 'ICMP'
+
+    - targets:
+        - 210.13.100.1
+      labels:
+        name: '上海联通 AS9929'
+        location: '上海'
+        isp: '中国联通'
+        protocol: 'ICMP'
+
+    - targets:
+        - 202.120.2.114
+      labels:
+        name: '上海交通大学 AS4538'
+        location: '上海'
+        isp: '教育网'
+        protocol: 'ICMP'
+
+
+  # 北京
+    - targets:
+        - 219.141.138.1
+      labels:
+        name: '北京电信 AS4847-AS4134'
+        location: '北京'
+        isp: '中国电信'
+        protocol: 'ICMP'
+
+    - targets:
+        - 221.221.208.1
+      labels:
+        name: '北京联通 AS4808-AS4837'
+        location: '北京'
+        isp: '中国联通'
+        protocol: 'ICMP'
+
+    - targets:
+        - 221.130.32.1
+      labels:
+        name: '北京移动 AS56048-AS9808'
+        location: '北京'
+        isp: '中国移动'
+        protocol: 'ICMP'
+
+    - targets:
+        - 223.70.155.5
+      labels:
+        name: '北京移动 AS56048-AS58807'
+        location: '北京'
+        isp: '中国移动'
+        protocol: 'ICMP'
+
+    - targets:
+        - 166.111.2.1
+      labels:
+        name: '清华大学 AS4538'
+        location: '北京'
+        isp: '教育网'
+        protocol: 'ICMP'
+
+
+# Oracle
+  # 亚太
+    - targets:
+        - 134.70.80.3
+      labels:
+        name: 'Oracle 日本东京'
+        location: '日本东京'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.112.3
+      labels:
+        name: 'Oracle 日本大阪'
+        location: '日本大阪'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.96.3
+      labels:
+        name: 'Oracle 韩国首尔'
+        location: '韩国首尔'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.132.2
+      labels:
+        name: 'Oracle 韩国春川'
+        location: '韩国春川'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.128.1
+      labels:
+        name: 'Oracle 新加坡'
+        location: '新加坡'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 217.142.168.1
+      labels:
+        name: 'Oracle 新加坡西'
+        location: '新加坡西'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.92.3
+      labels:
+        name: 'Oracle 澳大利亚悉尼'
+        location: '澳大利亚悉尼'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.108.3
+      labels:
+        name: 'Oracle 澳大利亚墨尔本'
+        location: '澳大利亚墨尔本'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.76.3
+      labels:
+        name: 'Oracle 印度孟买'
+        location: '印度孟买'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.120.2
+      labels:
+        name: 'Oracle 印度海得拉巴'
+        location: '印度海得拉巴'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+  # 北美
+    - targets:
+        - 134.70.28.1
+      labels:
+        name: 'Oracle 美国阿什本'
+        location: '美国阿什本'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.16.1
+      labels:
+        name: 'Oracle 美国凤凰城'
+        location: '美国凤凰城'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.124.2
+      labels:
+        name: 'Oracle 美国圣何塞'
+        location: '美国圣何塞'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.188.1
+      labels:
+        name: 'Oracle 美国芝加哥'
+        location: '美国芝加哥'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.116.1
+      labels:
+        name: 'Oracle 加拿大蒙特利尔'
+        location: '加拿大蒙特利尔'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.72.3
+      labels:
+        name: 'Oracle 加拿大多伦多'
+        location: '加拿大多伦多'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.184.1
+      labels:
+        name: 'Oracle 墨西哥克雷塔罗'
+        location: '墨西哥克雷塔罗'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.200.1
+      labels:
+        name: 'Oracle 墨西哥蒙特雷'
+        location: '墨西哥蒙特雷'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+  # 南美
+    - targets:
+        - 134.70.84.3
+      labels:
+        name: 'Oracle 巴西圣保罗'
+        location: '巴西圣保罗'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.140.1
+      labels:
+        name: 'Oracle 巴西维涅多'
+        location: '巴西维涅多'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.152.1
+      labels:
+        name: 'Oracle 智利圣地亚哥'
+        location: '智利圣地亚哥'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 165.1.104.1
+      labels:
+        name: 'Oracle 智利瓦尔帕莱索'
+        location: '智利瓦尔帕莱索'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 158.247.104.1
+      labels:
+        name: 'Oracle 哥伦比亚波哥大'
+        location: '哥伦比亚波哥大'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+  # 欧洲
+    - targets:
+        - 134.70.64.1
+      labels:
+        name: 'Oracle 英国伦敦'
+        location: '英国伦敦'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.136.1
+      labels:
+        name: 'Oracle 英国卡迪夫'
+        location: '英国卡迪夫'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.44.1
+      labels:
+        name: 'Oracle 德国法兰克福'
+        location: '德国法兰克福'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.88.3
+      labels:
+        name: 'Oracle 瑞士苏黎世'
+        location: '瑞士苏黎世'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.156.1
+      labels:
+        name: 'Oracle 瑞典斯德哥尔摩'
+        location: '瑞典斯德哥尔摩'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.104.1
+      labels:
+        name: 'Oracle 荷兰阿姆斯特丹'
+        location: '荷兰阿姆斯特丹'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.180.1
+      labels:
+        name: 'Oracle 法国巴黎'
+        location: '法国巴黎'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.164.1
+      labels:
+        name: 'Oracle 法国马赛'
+        location: '法国马赛'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.176.1
+      labels:
+        name: 'Oracle 西班牙马德里'
+        location: '西班牙马德里'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.168.1
+      labels:
+        name: 'Oracle 意大利米兰'
+        location: '意大利米兰'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+  # 中东/非洲
+    - targets:
+        - 134.70.148.1
+      labels:
+        name: 'Oracle 阿联酋迪拜'
+        location: '阿联酋迪拜'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.144.1
+      labels:
+        name: 'Oracle 阿联酋阿布扎比'
+        location: '阿联酋阿布扎比'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.100.3
+      labels:
+        name: 'Oracle 沙特阿拉伯吉达'
+        location: '沙特阿拉伯吉达'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 84.8.72.1
+      labels:
+        name: 'Oracle 沙特阿拉伯利雅得'
+        location: '沙特阿拉伯利雅得'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.172.1
+      labels:
+        name: 'Oracle 以色列耶路撒冷'
+        location: '以色列耶路撒冷'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+    - targets:
+        - 134.70.160.1
+      labels:
+        name: 'Oracle 南非约翰内斯堡'
+        location: '南非约翰内斯堡'
+        isp: 'Oracle'
+        protocol: 'ICMP'
+
+
+# Telegram
+    - targets:
+        - 91.108.17.3
+      labels:
+        name: 'Telegram DC5'
+        location: 'Global'
+        isp: 'Telegram'
+        protocol: 'ICMP'
+
+    - targets:
+        - 91.108.9.3
+      labels:
+        name: 'Telegram DC4'
+        location: 'Global'
+        isp: 'Telegram'
+        protocol: 'ICMP'
+
+    - targets:
+        - 91.108.13.3
+      labels:
+        name: 'Telegram DC1'
+        location: 'Global'
+        isp: 'Telegram'
+        protocol: 'ICMP'
+
+    - targets:
+        - 91.108.17.4
+      labels:
+        name: 'Telegram DC5 B'
+        location: 'Global'
+        isp: 'Telegram'
+        protocol: 'ICMP'
+
+    - targets:
+        - 91.108.9.4
+      labels:
+        name: 'Telegram DC4 B'
+        location: 'Global'
+        isp: 'Telegram'
+        protocol: 'ICMP'
+
+    - targets:
+        - 91.108.13.4
+      labels:
+        name: 'Telegram DC1 B'
+        location: 'Global'
+        isp: 'Telegram'
+        protocol: 'ICMP'
+
+
+# ANYCAST
+    - targets:
+        - 8.8.8.8
+      labels:
+        name: 'Google'
+        isp: 'ANYCAST'
+        protocol: 'ICMP'
+
+    - targets:
+        - 1.1.1.1
+      labels:
+        name: 'Cloudflare'
+        isp: 'ANYCAST'
+        protocol: 'ICMP'
