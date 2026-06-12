@@ -1030,6 +1030,122 @@ div[ref="terminalRef"] {
   justify-content: flex-end;
 }
 
+.control-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.3rem;
+  border: 1px solid #e5e7eb;
+  background-color: #ffffff;
+  color: #9ca3af;
+  border-radius: var(--radius);
+  cursor: grab;
+}
+
+.control-drag-handle:hover {
+  color: #374151;
+  background-color: #f9fafb;
+}
+
+.control-drag-handle:active {
+  cursor: grabbing;
+}
+
+.control-row-dragover td {
+  background-color: #eff6ff;
+}
+
+/* Compact single-row command editor */
+.command-edit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: var(--radius);
+}
+
+.command-edit-reorder {
+  display: inline-flex;
+  gap: 0.1rem;
+}
+
+.command-edit-move {
+  display: inline-flex;
+  padding: 0.2rem;
+  color: #6b7280;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.command-edit-move:hover:not(:disabled) {
+  color: #111827;
+}
+
+.command-edit-move:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.command-edit-mode {
+  height: 1.8rem;
+  padding: 0 0.6rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  white-space: nowrap;
+  border: 1px solid #d1d5db;
+  border-radius: var(--radius);
+  background-color: #f3f4f6;
+  color: #374151;
+  cursor: pointer;
+}
+
+.command-edit-mode:hover {
+  background-color: #e5e7eb;
+}
+
+.command-edit-name {
+  width: 8rem;
+  flex: 0 0 auto;
+}
+
+.command-edit-source {
+  flex: 1 1 12rem;
+  min-width: 9rem;
+}
+
+.command-edit-queue {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.7rem;
+  color: #6b7280;
+}
+
+.command-edit-queue-num {
+  width: 3.2rem;
+}
+
+.command-edit-queue-forced {
+  font-size: 0.7rem;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.command-edit-ignore {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.7rem;
+  color: #374151;
+  white-space: nowrap;
+}
+
+.command-edit-remove {
+  padding: 0.35rem;
+}
+
 .control-icon-button {
   display: inline-flex;
   align-items: center;

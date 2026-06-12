@@ -37,6 +37,7 @@ type AgentRecord struct {
 	Commands  []CommandRecord     `json:"commands"`
 	CreatedAt time.Time           `json:"created_at"`
 	UpdatedAt time.Time           `json:"updated_at"`
+	SortOrder int                 `json:"sort_order"`
 }
 
 // AgentUpsertInput is used for create/update requests.
@@ -153,6 +154,7 @@ func (s *Store) initSchema() error {
 		`CREATE INDEX IF NOT EXISTS idx_agents_group_name ON agents(group_name);`,
 		`CREATE INDEX IF NOT EXISTS idx_agents_name ON agents(name);`,
 		`ALTER TABLE agents ADD COLUMN token TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE agents ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;`,
 		`CREATE TABLE IF NOT EXISTS runtime_settings (
 			key TEXT PRIMARY KEY,
 			value_json TEXT NOT NULL,
@@ -298,9 +300,15 @@ func (s *Store) UpsertAgent(input AgentUpsertInput) (*AgentRecord, error) {
 		return nil, errors.New("agent uuid is required")
 	}
 
+	// New agents are appended to the end of the operator-defined order. On a
+	// conflict (update) the ON CONFLICT clause leaves sort_order untouched, so an
+	// existing agent keeps its position.
+	nextOrder := 0
+	_ = s.dbR.QueryRow(`SELECT COALESCE(MAX(sort_order), 0) + 1 FROM agents`).Scan(&nextOrder)
+
 	_, err = s.dbW.Exec(`
-INSERT INTO agents (uuid, token, name, group_name, details_json, commands_json, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO agents (uuid, token, name, group_name, details_json, commands_json, created_at, updated_at, sort_order)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(uuid) DO UPDATE SET
     token = excluded.token,
     name = excluded.name,
@@ -308,7 +316,7 @@ ON CONFLICT(uuid) DO UPDATE SET
     details_json = excluded.details_json,
     commands_json = excluded.commands_json,
     updated_at = excluded.updated_at
-`, uuidValue, input.Token, input.Name, input.Group, string(detailsJSON), string(commandsJSON), createdAt.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+`, uuidValue, input.Token, input.Name, input.Group, string(detailsJSON), string(commandsJSON), createdAt.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), nextOrder)
 	if err != nil {
 		return nil, fmt.Errorf("upsert agent: %w", err)
 	}
@@ -319,7 +327,7 @@ ON CONFLICT(uuid) DO UPDATE SET
 // GetAgentByUUID returns a stored agent by UUID.
 func (s *Store) GetAgentByUUID(uuid string) (*AgentRecord, error) {
 	row := s.dbR.QueryRow(`
-SELECT uuid, token, name, group_name, details_json, commands_json, created_at, updated_at
+SELECT uuid, token, name, group_name, details_json, commands_json, created_at, updated_at, sort_order
 FROM agents
 WHERE uuid = ?
 `, strings.TrimSpace(uuid))
@@ -330,7 +338,7 @@ WHERE uuid = ?
 // GetAgentByName returns a stored agent by name.
 func (s *Store) GetAgentByName(name string) (*AgentRecord, error) {
 	row := s.dbR.QueryRow(`
-SELECT uuid, token, name, group_name, details_json, commands_json, created_at, updated_at
+SELECT uuid, token, name, group_name, details_json, commands_json, created_at, updated_at, sort_order
 FROM agents
 WHERE name = ?
 `, strings.TrimSpace(name))
@@ -338,12 +346,13 @@ WHERE name = ?
 	return scanAgent(row)
 }
 
-// ListAgents returns all stored agents sorted by group and name.
+// ListAgents returns all stored agents in the operator-defined order
+// (sort_order), falling back to group/name for ties or un-ordered rows.
 func (s *Store) ListAgents() ([]AgentRecord, error) {
 	rows, err := s.dbR.Query(`
-SELECT uuid, token, name, group_name, details_json, commands_json, created_at, updated_at
+SELECT uuid, token, name, group_name, details_json, commands_json, created_at, updated_at, sort_order
 FROM agents
-ORDER BY group_name ASC, name ASC
+ORDER BY sort_order ASC, group_name ASC, name ASC
 `)
 	if err != nil {
 		return nil, fmt.Errorf("list agents: %w", err)
@@ -381,6 +390,47 @@ func (s *Store) DeleteAgent(uuid string) error {
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+// ListAgentOrder returns agent UUIDs in the operator-defined order. It is a cheap
+// query used to order the Status page consistently with the control panel.
+func (s *Store) ListAgentOrder() ([]string, error) {
+	rows, err := s.dbR.Query(`SELECT uuid FROM agents ORDER BY sort_order ASC, group_name ASC, name ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list agent order: %w", err)
+	}
+	defer rows.Close()
+	var uuids []string
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
+			return nil, err
+		}
+		uuids = append(uuids, uuid)
+	}
+	return uuids, rows.Err()
+}
+
+// UpdateAgentOrder persists a new operator-defined order: each UUID's sort_order
+// is set to its index in the provided slice, in a single transaction.
+func (s *Store) UpdateAgentOrder(uuids []string) error {
+	tx, err := s.dbW.Begin()
+	if err != nil {
+		return fmt.Errorf("begin order update: %w", err)
+	}
+	stmt, err := tx.Prepare(`UPDATE agents SET sort_order = ? WHERE uuid = ?`)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("prepare order update: %w", err)
+	}
+	defer stmt.Close()
+	for i, uuid := range uuids {
+		if _, err := stmt.Exec(i, strings.TrimSpace(uuid)); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("update agent order: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 // BuildRuntimeConfig converts a stored agent record into runtime config for the agent process.
@@ -444,7 +494,7 @@ func scanAgent(scanner interface{ Scan(dest ...any) error }) (*AgentRecord, erro
 		updatedAtRaw string
 	)
 
-	if err := scanner.Scan(&record.UUID, &record.Token, &record.Name, &record.Group, &detailsJSON, &commandsJSON, &createdAtRaw, &updatedAtRaw); err != nil {
+	if err := scanner.Scan(&record.UUID, &record.Token, &record.Name, &record.Group, &detailsJSON, &commandsJSON, &createdAtRaw, &updatedAtRaw, &record.SortOrder); err != nil {
 		return nil, err
 	}
 

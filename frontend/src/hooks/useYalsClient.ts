@@ -660,6 +660,18 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     return data;
   }, [buildHeaders, controlHeaders, listManagedAgents, protocol, serverUrl]);
 
+  const saveAgentOrder = useCallback(async (order: string[]) => {
+    const response = await fetch(`${protocol}//${serverUrl}/api/control/agents/order`, {
+      method: 'PUT',
+      headers: buildHeaders({ 'Content-Type': 'application/json', ...controlHeaders() }),
+      body: JSON.stringify({ order })
+    });
+    if (!response.ok) {
+      throw new Error((await response.text()) || '保存排序失败');
+    }
+    await listManagedAgents();
+  }, [buildHeaders, controlHeaders, listManagedAgents, protocol, serverUrl]);
+
   const deleteManagedAgent = useCallback(async (uuid: string) => {
     const response = await fetch(`${protocol}//${serverUrl}/api/control/agents/${uuid}`, {
       method: 'DELETE',
@@ -720,6 +732,7 @@ export const useYalsClient = (options: UseYalsClientOptions = {}) => {
     fetchRuntimeSettings,
     saveRuntimeSettings,
     saveManagedAgent,
+    saveAgentOrder,
     deleteManagedAgent
   };
 };

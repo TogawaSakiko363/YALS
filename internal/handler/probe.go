@@ -253,6 +253,26 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	statuses := h.agentManager.GetAgentStatusList()
+
+	// Order the cards by the operator-defined order (same as the control panel)
+	// so the Status page is stable instead of following the agent map's random
+	// iteration order. Unknown UUIDs sort last.
+	if order, err := h.store.ListAgentOrder(); err == nil {
+		idx := make(map[string]int, len(order))
+		for i, uuid := range order {
+			idx[uuid] = i
+		}
+		rank := func(uuid string) int {
+			if i, ok := idx[uuid]; ok {
+				return i
+			}
+			return len(order)
+		}
+		sort.SliceStable(statuses, func(i, j int) bool {
+			return rank(statuses[i].UUID) < rank(statuses[j].UUID)
+		})
+	}
+
 	items := make([]statusItem, 0, len(statuses))
 	for _, a := range statuses {
 		item := statusItem{UUID: a.UUID, Name: a.Name, Group: a.Group, Online: a.Online}

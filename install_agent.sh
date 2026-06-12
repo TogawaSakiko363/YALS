@@ -13,6 +13,10 @@ REPO_URL="${YALS_REPO_URL:-https://github.com/TogawaSakiko363/YALS.git}"
 REPO_REF="${YALS_REPO_REF:-main}"
 SERVICE_FILE="/etc/systemd/system/yals_agent.service"
 
+# 官方 tarball 的 Go 装在 /usr/local/go/bin、snap 装在 /snap/bin，这些目录通常不在
+# sudo 的 secure_path 里，会导致"已装 Go 却检测为未安装"。显式补进 PATH。
+export PATH="/usr/local/go/bin:/snap/bin:$PATH"
+
 # ---- 依赖自检与自动安装 ----
 GO_MIN_MAJOR=1
 GO_MIN_MINOR=25
@@ -56,7 +60,8 @@ go_version_ok() {
   command -v go >/dev/null 2>&1 || return 1
   local v major minor
   v="$(go version 2>/dev/null | awk '{print $3}' | sed 's/^go//')"
-  major="$(echo "$v" | cut -d. -f1)"; minor="$(echo "$v" | cut -d. -f2)"
+  major="$(echo "$v" | cut -d. -f1 | tr -cd '0-9')"
+  minor="$(echo "$v" | cut -d. -f2 | tr -cd '0-9')"
   [ -n "$major" ] && [ -n "$minor" ] || return 1
   [ "$major" -gt "$GO_MIN_MAJOR" ] && return 0
   [ "$major" -eq "$GO_MIN_MAJOR" ] && [ "$minor" -ge "$GO_MIN_MINOR" ]

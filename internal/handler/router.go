@@ -181,6 +181,7 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux, webDir string) {
 	mux.HandleFunc("/api/control/login", h.handleControlLogin)
 	mux.HandleFunc("/api/control/session", h.handleControlSession)
 	mux.HandleFunc("/api/control/agents", h.handleControlAgents)
+	mux.HandleFunc("/api/control/agents/order", h.handleControlAgentsOrder)
 	mux.HandleFunc("/api/control/agents/", h.handleControlAgentByUUID)
 	mux.HandleFunc("/api/control/runtime", h.handleControlRuntime)
 	mux.HandleFunc("/api/control/plugins", h.handleControlPlugins)

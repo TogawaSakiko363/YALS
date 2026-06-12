@@ -484,6 +484,33 @@ func (h *Handler) handleControlAgents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleControlAgentsOrder persists a drag-reordered agent list. Body:
+// {"order": ["uuid1", "uuid2", ...]}. Registered as an exact path so it takes
+// precedence over the /api/control/agents/ subtree handler.
+func (h *Handler) handleControlAgentsOrder(w http.ResponseWriter, r *http.Request) {
+	if !h.requireControlAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Order []string `json:"order"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := h.store.UpdateAgentOrder(payload.Order); err != nil {
+		logger.Errorf("Failed to update agent order: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
 func (h *Handler) handleControlAgentByUUID(w http.ResponseWriter, r *http.Request) {
 	if !h.requireControlAuth(w, r) {
 		return

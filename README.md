@@ -333,6 +333,42 @@ including a **local repository path**. Services:
 
 ---
 
+## nginx reverse proxy (public deployment)
+
+The agent↔server link is a long-lived gRPC/HTTP2 stream, and the server serves
+TLS with its self-signed certificate. To front it with nginx (terminating a real
+certificate for browsers and the agents), proxy with `grpc_pass` over **`grpcs://`**
+and **disable upstream verification** (the origin certificate is self-signed) —
+without this the gRPC calls are answered by the web handler and fail with
+`404 / Unimplemented`. Use long timeouts so the stream is not cut:
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name lg.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/lg.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/lg.example.com/privkey.pem;
+
+    location / {
+        grpc_pass grpcs://127.0.0.1:8080;
+
+        # Origin uses YALS's self-signed certificate — do not verify it here.
+        grpc_ssl_verify off;
+
+        # Keep the long-lived agent stream alive.
+        grpc_read_timeout  3600s;
+        grpc_send_timeout  3600s;
+    }
+}
+```
+
+Note: many CDNs break long-lived gRPC streams. If you front this with a CDN,
+either ensure it supports gRPC/HTTP2 end-to-end, or point agents at the origin /
+a non-proxied hostname while browsers use the CDN.
+
+---
+
 ## HTTP API reference
 
 All endpoints are served over HTTPS on the configured port.

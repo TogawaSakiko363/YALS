@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -79,8 +80,10 @@ func main() {
 	h := handler.NewHandler(agentManager, store, *runtimeSettings)
 
 	// Load latency-probe targets, wire agent metrics/probe reports to the store,
-	// and start the targets hot-reload watcher + retention pruner.
-	h.InitProbing("targets.yaml")
+	// and start the targets hot-reload watcher + retention pruner. targets.yaml
+	// lives next to the config file (e.g. /etc/yals/targets.yaml) rather than
+	// depending on the process working directory.
+	h.InitProbing(filepath.Join(filepath.Dir(*configFile), "targets.yaml"))
 
 	// Serve the built-in self-signed certificate. Agents trust it out of the box
 	// (they pin it), so a direct agent↔server link needs no certificate setup. For

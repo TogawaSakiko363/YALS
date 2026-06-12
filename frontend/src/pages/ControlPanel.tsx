@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Save, Trash2, Shield, Server, Settings, ChevronUp, ChevronDown, LogOut, Pencil, X, Activity, Home, Download, Copy, Check } from 'lucide-react';
+import { Plus, Save, Trash2, Shield, Server, Settings, ChevronUp, ChevronDown, LogOut, Pencil, X, Activity, Home, Download, Copy, Check, Menu } from 'lucide-react';
 import { CustomConfig } from '../hooks/useCustomConfig';
 import { useYalsClient } from '../hooks/useYalsClient';
 import { AgentCommand, AgentConfigPayload, AgentConfigRecord, RuntimeSettings, ProbeTarget } from '../types/yals';
@@ -47,19 +47,19 @@ function validateAgentForm(agent: AgentConfigPayload): string | null {
   const seen = new Set<string>();
   for (let i = 0; i < agent.commands.length; i += 1) {
     const command = agent.commands[i];
-    const name = command.name.trim();
-    if (!name) return `Command #${i + 1}: name is required`;
+    const mode = getCommandMode(command);
+    // In plugin mode the command name is the plugin name (no separate name field).
+    const name = (mode === 'plugin' ? (command.use_plugin || '') : command.name).trim();
+    if (!name) return mode === 'plugin' ? `Command #${i + 1}: select a plugin` : `Command #${i + 1}: name is required`;
     if (seen.has(name)) return `Duplicate command name: ${name}`;
     seen.add(name);
 
-    if (getCommandMode(command) === 'shell') {
+    if (mode === 'shell') {
       const template = (command.template || '').trim();
       if (!template) return `Command "${name}": template is required`;
       if (command.ignore_target && template.includes('{target}')) {
         return `Command "${name}": template uses {target} but "Ignore Target Input" is enabled`;
       }
-    } else if (!(command.use_plugin || '').trim()) {
-      return `Command "${name}": select a plugin`;
     }
   }
   return null;
@@ -117,6 +117,7 @@ export function ControlPanel({ config }: ControlPanelProps) {
     fetchRuntimeSettings,
     saveRuntimeSettings,
     saveManagedAgent,
+    saveAgentOrder,
     deleteManagedAgent
   } = useYalsClient();
 
@@ -130,6 +131,15 @@ export function ControlPanel({ config }: ControlPanelProps) {
   const [editingTargets, setEditingTargets] = useState<ProbeTarget[]>([]);
   const [editingInterval, setEditingInterval] = useState(60);
   const [copiedUuid, setCopiedUuid] = useState<string | null>(null);
+  const [savingAgent, setSavingAgent] = useState(false);
+  // Local mirror of managedAgents for optimistic drag-reordering of the table.
+  const [localAgents, setLocalAgents] = useState<AgentConfigRecord[]>([]);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    setLocalAgents(managedAgents);
+  }, [managedAgents]);
 
   // Single place that loads control-plane data once the session is
   // authenticated. editingRuntime is kept in sync from runtimeSettings by the
@@ -248,9 +258,10 @@ export function ControlPanel({ config }: ControlPanelProps) {
       const nextMode = getCommandMode(current) === 'shell' ? 'plugin' : 'shell';
       // A shell template and a plugin name are not interchangeable, so switching
       // modes does not carry the value over. Entering plugin mode preselects the
-      // first available plugin (the mode is inferred from use_plugin being set).
+      // first plugin and uses its name as the command name (no separate name field).
+      const firstPlugin = availablePlugins[0]?.name || '';
       commandsCopy[index] = nextMode === 'plugin'
-        ? { ...current, template: '', use_plugin: availablePlugins[0]?.name || '' }
+        ? { ...current, template: '', use_plugin: firstPlugin, name: firstPlugin }
         : { ...current, template: '', use_plugin: '' };
       return { ...prev, commands: commandsCopy };
     });
@@ -264,7 +275,9 @@ export function ControlPanel({ config }: ControlPanelProps) {
       commandsCopy[index] = {
         ...current,
         template: mode === 'shell' ? value : '',
-        use_plugin: mode === 'plugin' ? value : ''
+        use_plugin: mode === 'plugin' ? value : '',
+        // In plugin mode the command name is the plugin name.
+        name: mode === 'plugin' ? value : current.name
       };
       return { ...prev, commands: commandsCopy };
     });
@@ -325,15 +338,25 @@ export function ControlPanel({ config }: ControlPanelProps) {
   };
 
   const handleSaveAgent = async () => {
-    const validationError = validateAgentForm(editingAgent);
+    if (savingAgent) return; // guard against double-submit from rapid clicks
+    // Plugin commands use the plugin name as their command name (no separate
+    // name field), so normalize before validating/sending.
+    const payload: AgentConfigPayload = {
+      ...editingAgent,
+      commands: editingAgent.commands.map((c) =>
+        getCommandMode(c) === 'plugin' ? { ...c, name: (c.use_plugin || '').trim() } : c
+      )
+    };
+    const validationError = validateAgentForm(payload);
     if (validationError) {
       setControlMessage(null);
       setControlError(validationError);
       return;
     }
+    setSavingAgent(true);
     try {
       setControlError(null);
-      const saved = await saveManagedAgent(editingAgent);
+      const saved = await saveManagedAgent(payload);
       setEditingAgent({
         uuid: saved.uuid,
         token: saved.token,
@@ -345,7 +368,25 @@ export function ControlPanel({ config }: ControlPanelProps) {
       setControlMessage('Agent saved. Use the Install Command below to deploy it.');
     } catch (error: unknown) {
       setControlError(getErrorMessage(error) || 'Failed to save agent');
+    } finally {
+      setSavingAgent(false);
     }
+  };
+
+  // Drag-and-drop reorder of the agents table (grab the ☰ handle). On drop the new
+  // order is applied optimistically and persisted; the Status page follows it.
+  const commitAgentReorder = (targetIndex: number) => {
+    setDragOverIndex(null);
+    if (dragIndex === null || dragIndex === targetIndex) {
+      setDragIndex(null);
+      return;
+    }
+    const next = [...localAgents];
+    const [moved] = next.splice(dragIndex, 1);
+    next.splice(targetIndex, 0, moved);
+    setLocalAgents(next);
+    setDragIndex(null);
+    saveAgentOrder(next.map((a) => a.uuid)).catch((error) => setControlError(getErrorMessage(error)));
   };
 
   const handleDeleteAgent = async (uuid?: string) => {
@@ -451,10 +492,19 @@ export function ControlPanel({ config }: ControlPanelProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {managedAgents.map((record) => {
+                    {localAgents.map((record, index) => {
                       const online = nodeStatuses.get(record.name);
                       return (
-                        <tr key={record.uuid}>
+                        <tr
+                          key={record.uuid}
+                          className={dragOverIndex === index ? 'control-row-dragover' : ''}
+                          onDragOver={(e) => {
+                            if (dragIndex === null) return;
+                            e.preventDefault();
+                            if (dragOverIndex !== index) setDragOverIndex(index);
+                          }}
+                          onDrop={(e) => { e.preventDefault(); commitAgentReorder(index); }}
+                        >
                           <td className="font-medium text-gray-900">{record.name}</td>
                           <td>{record.group}</td>
                           <td>
@@ -468,6 +518,17 @@ export function ControlPanel({ config }: ControlPanelProps) {
                           <td className="text-gray-500">{record.updated_at ? new Date(record.updated_at).toLocaleString() : '—'}</td>
                           <td>
                             <div className="control-row-actions">
+                              <button
+                                type="button"
+                                className="control-drag-handle"
+                                title="Drag to reorder"
+                                aria-label="Drag to reorder"
+                                draggable
+                                onDragStart={(e) => { setDragIndex(index); e.dataTransfer.effectAllowed = 'move'; }}
+                                onDragEnd={() => { setDragIndex(null); setDragOverIndex(null); }}
+                              >
+                                <Menu className="w-3.5 h-3.5" />
+                              </button>
                               <button type="button" className="control-icon-button" onClick={() => handleCopyInstall(record.uuid, record.token)} title="Copy install command">
                                 {copiedUuid === record.uuid
                                   ? <><Check className="w-3.5 h-3.5" /> Copied</>
@@ -484,7 +545,7 @@ export function ControlPanel({ config }: ControlPanelProps) {
                         </tr>
                       );
                     })}
-                    {managedAgents.length === 0 && (
+                    {localAgents.length === 0 && (
                       <tr>
                         <td colSpan={6} className="control-table-empty">No registered agents yet. Click “New Agent” to add one.</td>
                       </tr>
@@ -657,7 +718,7 @@ export function ControlPanel({ config }: ControlPanelProps) {
                       </div>
                     </div>
 
-                    <div className="space-y-3">
+                    <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <h3 className="text-sm font-semibold text-gray-900">Command Templates & Plugins</h3>
                         <button className="command-button primary" onClick={addCommand}>
@@ -674,120 +735,48 @@ export function ControlPanel({ config }: ControlPanelProps) {
                         const queueForced = mode === 'plugin' && selectedPlugin?.maximum_queue_overridden === true;
                         const ignoreTargetChecked = ignoreTargetForced ? selectedPlugin!.ignore_target : (command.ignore_target || false);
                         return (
-                          <div key={index} className="border border-gray-200 rounded-md p-3 space-y-3">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-medium text-gray-500">Command #{index + 1}</span>
-                              <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  className="p-1 text-gray-500 hover:text-gray-900 disabled:opacity-30 disabled:cursor-not-allowed"
-                                  disabled={index === 0}
-                                  onClick={() => moveCommand(index, -1)}
-                                  title="Move up"
-                                >
-                                  <ChevronUp className="w-4 h-4" />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="p-1 text-gray-500 hover:text-gray-900 disabled:opacity-30 disabled:cursor-not-allowed"
-                                  disabled={index === editingAgent.commands.length - 1}
-                                  onClick={() => moveCommand(index, 1)}
-                                  title="Move down"
-                                >
-                                  <ChevronDown className="w-4 h-4" />
-                                </button>
-                              </div>
-                            </div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                              <div>
-                                <FieldLabel>Command Name</FieldLabel>
-                                <input className="command-target-input" placeholder="Command name" value={command.name} onChange={(e) => updateCommand(index, { name: e.target.value })} />
-                              </div>
-                              <div>
-                                <FieldLabel>{mode === 'shell' ? 'Template' : 'Plugin'}</FieldLabel>
-                                {mode === 'shell' ? (
-                                  <input
-                                    className="command-target-input"
-                                    placeholder="e.g. ping -c 4 {target}"
-                                    value={command.template || ''}
-                                    onChange={(e) => updateCommandSourceValue(index, e.target.value)}
-                                  />
-                                ) : (
-                                  <select
-                                    className="command-select w-full"
-                                    value={command.use_plugin || ''}
-                                    onChange={(e) => updateCommandSourceValue(index, e.target.value)}
-                                  >
-                                    <option value="" disabled>Select a plugin</option>
-                                    {availablePlugins.map((p) => (
-                                      <option key={p.name} value={p.name}>{p.name}</option>
-                                    ))}
-                                  </select>
-                                )}
-                                {mode === 'shell' && (
-                                  <p className="text-xs text-gray-500 mt-1">
-                                    Use <code>{'{target}'}</code> to place the target; if omitted it is appended at the end.
-                                  </p>
-                                )}
-                                {mode === 'plugin' && selectedPlugin?.description && (
-                                  <p className="text-xs text-gray-500 mt-1">{selectedPlugin.description}</p>
-                                )}
-                              </div>
-                              <div>
-                                <FieldLabel>Mode</FieldLabel>
-                                <button
-                                  type="button"
-                                  className="command-button primary"
-                                  onClick={() => toggleCommandMode(index)}
-                                >
-                                  {mode === 'shell' ? 'Mode: Shell' : 'Mode: Plugin'}
-                                </button>
-                              </div>
-                              <div>
-                                <FieldLabel>Maximum Queue</FieldLabel>
-                                {queueForced ? (
-                                  <p className="text-sm text-gray-600">
-                                    {selectedPlugin!.maximum_queue > 0
-                                      ? `${selectedPlugin!.maximum_queue} (set by plugin)`
-                                      : 'Unlimited (set by plugin)'}
-                                  </p>
-                                ) : (
-                                  <div className="flex items-center gap-2">
-                                    <label className="text-sm text-gray-700 flex items-center gap-2 whitespace-nowrap">
-                                      <input
-                                        type="checkbox"
-                                        checked={queueEnabled}
-                                        onChange={(e) => updateCommand(index, { maxmium_queue: e.target.checked ? Math.max(command.maxmium_queue ?? 0, 1) : 0 })}
-                                      />
-                                      Enabled
-                                    </label>
-                                    <input
-                                      className="command-target-input"
-                                      type="number"
-                                      min="1"
-                                      placeholder="Concurrency"
-                                      disabled={!queueEnabled}
-                                      value={queueEnabled ? String(command.maxmium_queue ?? 1) : ''}
-                                      onChange={(e) => updateCommand(index, { maxmium_queue: Number(e.target.value) || 1 })}
-                                    />
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <label className="text-sm text-gray-700 flex items-center gap-2">
-                                <input
-                                  type="checkbox"
-                                  checked={ignoreTargetChecked}
-                                  disabled={ignoreTargetForced}
-                                  onChange={(e) => updateCommand(index, { ignore_target: e.target.checked })}
-                                />
-                                Ignore Target Input{ignoreTargetForced ? ' (set by plugin)' : ''}
-                              </label>
-                              <button className="command-button danger" onClick={() => removeCommand(index)}>
-                                <Trash2 className="w-4 h-4" /> Remove Command
+                          <div key={index} className="command-edit-row">
+                            <div className="command-edit-reorder">
+                              <button type="button" className="command-edit-move" disabled={index === 0} onClick={() => moveCommand(index, -1)} title="Move up">
+                                <ChevronUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button type="button" className="command-edit-move" disabled={index === editingAgent.commands.length - 1} onClick={() => moveCommand(index, 1)} title="Move down">
+                                <ChevronDown className="w-3.5 h-3.5" />
                               </button>
                             </div>
+                            <button type="button" className="command-edit-mode" onClick={() => toggleCommandMode(index)} title="Toggle shell / plugin mode">
+                              {mode === 'shell' ? 'Shell' : 'Plugin'}
+                            </button>
+                            {mode === 'shell' ? (
+                              <>
+                                <input className="command-target-input command-edit-name" placeholder="Name" value={command.name} onChange={(e) => updateCommand(index, { name: e.target.value })} />
+                                <input className="command-target-input command-edit-source" placeholder="Template, e.g. ping -c 4 {target}" value={command.template || ''} onChange={(e) => updateCommandSourceValue(index, e.target.value)} />
+                              </>
+                            ) : (
+                              <select className="command-select command-edit-source" value={command.use_plugin || ''} title={selectedPlugin?.description || 'Select a plugin'} onChange={(e) => updateCommandSourceValue(index, e.target.value)}>
+                                <option value="" disabled>Select a plugin</option>
+                                {availablePlugins.map((p) => (
+                                  <option key={p.name} value={p.name}>{p.name}</option>
+                                ))}
+                              </select>
+                            )}
+                            {queueForced ? (
+                              <span className="command-edit-queue-forced" title="Concurrency set by plugin">
+                                {selectedPlugin!.maximum_queue > 0 ? `q:${selectedPlugin!.maximum_queue}` : 'q:∞'}
+                              </span>
+                            ) : (
+                              <label className="command-edit-queue" title="Max concurrent runs">
+                                <input type="checkbox" checked={queueEnabled} onChange={(e) => updateCommand(index, { maxmium_queue: e.target.checked ? Math.max(command.maxmium_queue ?? 0, 1) : 0 })} />
+                                <input className="command-target-input command-edit-queue-num" type="number" min="1" placeholder="Q" disabled={!queueEnabled} value={queueEnabled ? String(command.maxmium_queue ?? 1) : ''} onChange={(e) => updateCommand(index, { maxmium_queue: Number(e.target.value) || 1 })} />
+                              </label>
+                            )}
+                            <label className="command-edit-ignore" title={`Ignore target input${ignoreTargetForced ? ' (set by plugin)' : ''}`}>
+                              <input type="checkbox" checked={ignoreTargetChecked} disabled={ignoreTargetForced} onChange={(e) => updateCommand(index, { ignore_target: e.target.checked })} />
+                              Ignore target
+                            </label>
+                            <button type="button" className="control-icon-button danger command-edit-remove" onClick={() => removeCommand(index)} title="Remove command">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         );
                       })}
@@ -797,8 +786,8 @@ export function ControlPanel({ config }: ControlPanelProps) {
                     {controlMessage && <div className="command-status success">{controlMessage}</div>}
 
                     <div className="flex flex-wrap gap-3">
-                      <button className="command-button primary" onClick={handleSaveAgent}>
-                        <Save className="w-4 h-4" /> Save Agent
+                      <button className="command-button primary" onClick={handleSaveAgent} disabled={savingAgent}>
+                        <Save className="w-4 h-4" /> {savingAgent ? 'Saving…' : (editingAgent.uuid ? 'Save Agent' : 'Create Agent')}
                       </button>
                       {editingAgent.uuid && (
                         <button className="command-button danger" onClick={() => handleDeleteAgent(editingAgent.uuid)}>
