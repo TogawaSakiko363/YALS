@@ -627,6 +627,9 @@ function App({ config }: AppProps) {
                     <div className="rounded-md bg-gray-50 border border-gray-200 p-4 text-sm text-gray-700 space-y-2">
                       <p className="font-semibold">Install Command Example</p>
                       <code>yals_agent -s {window.location.hostname || 'example.com'} -p {window.location.port || '443'} -u {editingAgent.uuid || '[UUID after save]'} -t {editingAgent.token || '[Token]'}</code>
+                      <p className="text-xs text-gray-500">
+                        The agent verifies the server using the built-in certificate that both ship with — no extra TLS parameters are needed.
+                      </p>
                     </div>
                   </div>
                 </div>

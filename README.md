@@ -115,7 +115,8 @@ This takes you from an empty machine to a working looking glass with one node.
    with the password from `config.yaml`.
 5. **Create an agent** in the control panel (name, group, commands). On save you
    get a **UUID** and **Token**, plus a ready‑to‑paste agent command.
-6. **Start the agent** on the node host with those credentials:
+6. **Start the agent** on the node host with the command shown in the control
+   panel:
    ```bash
    ./yals_agent -s <server-host> -p <port> -u <uuid> -t <token>
    ```
@@ -123,9 +124,12 @@ This takes you from an empty machine to a working looking glass with one node.
 8. **Run a command**: pick the node, pick a command (e.g. `ping`), enter a target
    IP/domain, and click **Run** to stream live output.
 
-> Self‑signed TLS is generated automatically on first start, so browsers and the
-> agent will see an untrusted certificate unless you supply your own (see
-> [Security notes](#security-notes)).
+> **Agent → server TLS trust.** The server and agent ship with the **same
+> built‑in self‑signed certificate**; the agent verifies the server by pinning
+> it, so no certificate files or fingerprint parameters are needed. Custom
+> certificates are not supported. The browser web UI will show an untrusted‑
+> certificate warning — put YALS behind a TLS‑terminating reverse proxy if you
+> need a browser‑trusted certificate (see [Security notes](#security-notes)).
 
 ---
 
@@ -171,8 +175,6 @@ server:
   port: 8080
   password: "your_password"          # control-panel login password
   log_level: "info"                  # debug | info | warn | error
-  tls_cert_file: "./cert.pem"        # auto-generated (self-signed) if missing
-  tls_key_file: "./key.pem"
   trust_proxy_headers: false         # honor X-Real-IP / X-Forwarded-For only behind a trusted proxy
   metrics_enabled: false             # expose Prometheus /metrics
   metrics_token: ""                  # optional bearer token for /metrics
@@ -185,7 +187,6 @@ database:
 |---|---|
 | `server.host` / `server.port` | Bind address and unified HTTPS/gRPC port |
 | `server.password` | Password for the `/control` panel |
-| `server.tls_cert_file` / `tls_key_file` | TLS cert/key; a self-signed pair is generated if absent |
 | `server.trust_proxy_headers` | When `true`, derive client IP from `X-Real-IP` / `X-Forwarded-For` (only enable behind a trusted reverse proxy) |
 | `server.metrics_enabled` | Enable the `/metrics` endpoint (off by default) |
 | `server.metrics_token` | If set, scrapers must send `Authorization: Bearer <token>` |
@@ -235,6 +236,9 @@ Agents are defined in the control panel, not in a local file.
 | `-u` | — | Agent UUID from the control panel (required) |
 | `-t` | — | Agent token from the control panel (required) |
 | `-version` | — | Print version + bundled plugins and exit |
+
+The agent verifies the server's TLS certificate by pinning the built‑in
+certificate that both ship with — there is nothing to configure.
 
 On connect the agent performs a handshake, downloads its allowed command set, and
 opens a bidirectional gRPC stream. It auto-reconnects if the connection drops.
@@ -370,10 +374,15 @@ and [`docs/grafana.md`](docs/grafana.md).
 
 ## Security notes
 
-- **TLS:** the server generates a self‑signed certificate if none is configured.
-  For production, set `tls_cert_file` / `tls_key_file` to a trusted certificate.
-  The agent currently connects without verifying the server certificate, so use a
-  trusted network path or pin a certificate if that matters to you.
+- **TLS:** the server and agent ship with the **same built‑in self‑signed
+  certificate**. The agent verifies the server by pinning it (it accepts the
+  connection only if the server presents exactly that certificate), so the
+  agent↔server link is encrypted and authenticated with no configuration.
+  Trade‑off: the certificate's private key ships with the software, so it
+  protects against a casual man‑in‑the‑middle but **not** against an attacker who
+  has the binary (they could extract the key and impersonate the server). Agent
+  identity is still protected by the per‑agent token. For a browser‑trusted web
+  UI, terminate TLS at a reverse proxy in front of YALS.
 - **Tokens & secrets:** control sessions and agent tokens are generated with a
   CSPRNG; the control password and agent/gRPC tokens are compared in constant
   time.

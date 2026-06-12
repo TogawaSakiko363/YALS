@@ -71,8 +71,6 @@ server:
   port: $SERVER_PORT
   password: "$SERVER_PASSWORD"
   log_level: "info"
-  tls_cert_file: "$SERVER_DIR/cert.pem"
-  tls_key_file: "$SERVER_DIR/key.pem"
 
 database:
   path: "$SERVER_DIR/data/yals.db"

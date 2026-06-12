@@ -58,7 +58,9 @@ func NewClient(host string, port int, uuid string, token string) *Client {
 	return NewClientWithConfig(agentConfig)
 }
 
-// NewClientWithConfig creates a new agent client with configuration
+// NewClientWithConfig creates a new agent client with configuration. The agent
+// verifies the server by pinning the built-in certificate; there is nothing to
+// configure for TLS trust.
 func NewClientWithConfig(agentConfig *config.AgentConfig) *Client {
 	plugin.GetManager().SetConfig(agentConfig)
 

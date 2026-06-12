@@ -6,8 +6,9 @@ server:
   port: 8080  # Unified port for both gRPC (agent connections) and HTTP (web interface)
   password: "your_password"
   log_level: "info"  # debug, info, warn, error
-  tls_cert_file: "./cert.pem"  # Path to TLS certificate file (auto-generated if missing)
-  tls_key_file: "./key.pem"    # Path to TLS private key file (auto-generated if missing)
+  # TLS uses a built-in self-signed certificate (agents pin it). Custom
+  # certificates are not supported; put YALS behind a TLS-terminating reverse
+  # proxy if the web UI needs a browser-trusted certificate.
   # Only enable when behind a trusted reverse proxy that sets X-Real-IP /
   # X-Forwarded-For. When false (default) the real connection address is used for
   # logging and rate limiting, preventing clients from spoofing these headers.

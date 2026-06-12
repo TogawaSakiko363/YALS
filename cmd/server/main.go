@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"log"
@@ -18,7 +19,7 @@ import (
 	"YALS/internal/logger"
 	"YALS/internal/plugin"
 	serverstore "YALS/internal/store/server"
-	"YALS/internal/tls"
+	yalstls "YALS/internal/tls"
 	"YALS/internal/utils"
 
 	// Register agent plugin metadata so the control API can enumerate plugins and
@@ -76,17 +77,15 @@ func main() {
 
 	h := handler.NewHandler(agentManager, store, *runtimeSettings)
 
-	certExists := fileExists(cfg.Server.TLSCertFile) && fileExists(cfg.Server.TLSKeyFile)
-	if certExists {
-		logger.Infof("Found existing certificates at %s and %s, using them", cfg.Server.TLSCertFile, cfg.Server.TLSKeyFile)
-	} else {
-		logger.Warnf("No certificates found at %s and %s, generating temporary self-signed certificate", cfg.Server.TLSCertFile, cfg.Server.TLSKeyFile)
-		if err := tls.GenerateSelfSignedCert(cfg.Server.TLSCertFile, cfg.Server.TLSKeyFile, "YALS_INSECURE"); err != nil {
-			logger.Fatalf("Failed to generate TLS certificates: %v", err)
-		}
-		logger.Warnf("Generated temporary self-signed certificate with SNI=YALS_INSECURE")
-		logger.Warnf("For production use, please provide valid TLS certificates")
+	// Serve the built-in self-signed certificate. Agents embed and pin the same
+	// certificate, so the server and agents verify each other without any cert
+	// files or fingerprint parameters. Custom certificates are not supported.
+	serverCert, err := tls.X509KeyPair(yalstls.BuiltinCertPEM(), yalstls.BuiltinKeyPEM())
+	if err != nil {
+		logger.Fatalf("Failed to load built-in TLS certificate: %v", err)
 	}
+	logger.Infof("Using built-in TLS certificate (agents verify the server by pinning it)")
+	logger.Warnf("Browsers will show an untrusted-certificate warning; put YALS behind a TLS-terminating proxy if you need a trusted certificate for the web UI")
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	grpcServer := newGRPCServer(*runtimeSettings)
@@ -104,11 +103,16 @@ func main() {
 				mux.ServeHTTP(w, r)
 			}
 		}),
+		TLSConfig: &tls.Config{
+			Certificates: []tls.Certificate{serverCert},
+			MinVersion:   tls.VersionTLS12,
+		},
 	}
 
 	go func() {
 		logger.Infof("Starting unified HTTPS server (gRPC + HTTP) on %s", addr)
-		if err := server.ListenAndServeTLS(cfg.Server.TLSCertFile, cfg.Server.TLSKeyFile); err != nil && err != http.ErrServerClosed {
+		// Empty cert/key paths make ListenAndServeTLS use TLSConfig.Certificates.
+		if err := server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
 			logger.Fatalf("Failed to start HTTPS server: %v", err)
 		}
 	}()
@@ -141,14 +145,6 @@ func setupLogging(level string) {
 	logger.Debugf("Logging level set to: %s", level)
 	log.SetOutput(os.Stdout)
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
-}
-
-func fileExists(filename string) bool {
-	info, err := os.Stat(filename)
-	if os.IsNotExist(err) {
-		return false
-	}
-	return !info.IsDir()
 }
 
 func seedStoredAgents(agentManager *agent.Manager, store *serverstore.Store, cfg *config.Config) {

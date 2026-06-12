@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,12 +15,41 @@ import (
 	"YALS/internal/logger"
 	"YALS/internal/plugin"
 	"YALS/internal/proto"
+	yalstls "YALS/internal/tls"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 )
+
+// buildTLSConfig constructs the TLS configuration used to dial the server. The
+// agent verifies the server by pinning the built-in certificate that both the
+// server and agent embed: it accepts the connection only if the server presents
+// exactly that certificate. Default chain verification is disabled (the cert is
+// self-signed) and replaced by this exact match, which is the matched trust the
+// server and agent agree on out of the box — no fingerprint or CA is needed.
+func (c *Client) buildTLSConfig(hostname string) (*tls.Config, error) {
+	builtinDER, err := yalstls.BuiltinCertDER()
+	if err != nil {
+		return nil, fmt.Errorf("load built-in certificate: %w", err)
+	}
+
+	return &tls.Config{
+		ServerName:         hostname,
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: true, // default chain check off; replaced by the exact pin below
+		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 {
+				return fmt.Errorf("server presented no certificate")
+			}
+			if !bytes.Equal(rawCerts[0], builtinDER) {
+				return fmt.Errorf("server certificate does not match the built-in YALS certificate")
+			}
+			return nil
+		},
+	}, nil
+}
 
 // ConnectToServer connects to the server and handles the gRPC connection
 func (c *Client) ConnectToServer() error {
@@ -31,9 +62,9 @@ func (c *Client) ConnectToServer() error {
 		hostname = hostname[:idx]
 	}
 
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true,
-		ServerName:         hostname,
+	tlsConfig, err := c.buildTLSConfig(hostname)
+	if err != nil {
+		return fmt.Errorf("failed to build TLS config: %w", err)
 	}
 	creds := credentials.NewTLS(tlsConfig)
 	opts = append(opts, grpc.WithTransportCredentials(creds))

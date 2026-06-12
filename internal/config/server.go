@@ -11,12 +11,10 @@ import (
 // Config represents the file-based server bootstrap configuration.
 type Config struct {
 	Server struct {
-		Host        string `yaml:"host"`
-		Port        int    `yaml:"port"`
-		Password    string `yaml:"password"`
-		LogLevel    string `yaml:"log_level"`
-		TLSCertFile string `yaml:"tls_cert_file"`
-		TLSKeyFile  string `yaml:"tls_key_file"`
+		Host     string `yaml:"host"`
+		Port     int    `yaml:"port"`
+		Password string `yaml:"password"`
+		LogLevel string `yaml:"log_level"`
 		// TrustProxyHeaders controls whether X-Real-IP / X-Forwarded-For headers
 		// are honored when determining the client IP. Only enable this when the
 		// server sits behind a trusted reverse proxy that sets these headers;
