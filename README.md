@@ -322,8 +322,8 @@ panel, which copies this command with the right uuid/token):
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TogawaSakiko363/YALS/refs/heads/main/install_agent.sh \
   | sudo bash -s -- --server-host lg.example.com --server-port 443 --uuid <uuid> --token <token>
-# update in place later (from a checkout):
-sudo ./install_agent.sh update --server-host lg.example.com --server-port 443 --uuid <uuid> --token <token>
+# update in place later (rebuilds + restarts, reuses the existing service params):
+sudo ./install_agent.sh update
 ```
 
 Optional for both: `--repo <git-url-or-local-path>` and `--ref <branch/tag>`
@@ -390,17 +390,23 @@ server hot-reloads it and pushes the new config to all online agents.
 
 ## Security notes
 
-- **TLS:** the agent verifies the server with **standard CA validation** (the
-  host's system root store + hostname), exactly like a browser. No certificate is
-  committed to the repo; the server generates its own self‑signed certificate on
-  first start (persisted under `<data>/tls`) for its own listener. For a setup
-  that is trusted by both browsers and agents — including public deployments
-  behind a CDN — **terminate TLS at a reverse proxy / CDN holding a CA‑trusted
-  certificate for your domain** (e.g. Let's Encrypt); the agent will validate it.
-  The agent↔server link is a long‑lived gRPC/HTTP2 stream, so the proxy must use
-  `grpc_pass` with HTTP/2, and note that some CDNs break long‑lived gRPC streams
-  (consider pointing agents at the origin / a non‑proxied hostname). Agent
-  identity is additionally protected by the per‑agent token.
+- **TLS (dual trust):** the agent trusts the server if **either** (1) it presents
+  the **built‑in YALS self‑signed certificate** (the server serves it out of the
+  box — a direct agent↔server link is encrypted/authenticated with zero config),
+  **or** (2) it presents a certificate that passes **standard CA validation**
+  (system roots + hostname), i.e. the server is reached through a TLS‑terminating
+  reverse proxy / CDN holding a real certificate for your domain. So the same
+  agent works both directly and behind a public proxy. Trade‑off on path (1): the
+  built‑in certificate's private key ships with the software, so it resists a
+  casual MITM but **not** an attacker who has the binary — for stronger server
+  authentication use a real certificate (path 2). Agent identity is additionally
+  protected by the per‑agent token.
+  - **Behind a CDN/proxy:** the agent↔server link is a long‑lived gRPC/HTTP2
+    stream, so the proxy must use `grpc_pass` with HTTP/2 (a plain `proxy_pass`
+    or an HTTP/1.1 hop makes the server answer the gRPC call from its web handler
+    → `404 / Unimplemented`). Many CDNs break long‑lived gRPC streams; the
+    simplest robust setup is to **point agents at the origin** (self‑signed cert,
+    pinned) while browsers use the CDN/proxy with the real certificate.
 - **Tokens & secrets:** control sessions and agent tokens are generated with a
   CSPRNG; the control password and agent/gRPC tokens are compared in constant
   time.

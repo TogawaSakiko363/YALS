@@ -819,7 +819,7 @@ export function ControlPanel({ config }: ControlPanelProps) {
                         </div>
                         <code className="block break-all">{buildInstallCommand(editingAgent.uuid, editingAgent.token)}</code>
                         <p className="text-xs text-gray-500">
-                          Run this on the agent host. It pulls and builds the agent, then registers it as a systemd service. The agent validates the server certificate against the system CAs, so the server should be reached over a domain with a CA-trusted certificate (e.g. behind a TLS-terminating reverse proxy / CDN).
+                          Run this on the agent host. It pulls and builds the agent, then registers it as a systemd service. The agent trusts the server's built-in certificate directly, and also accepts a real CA-trusted certificate when the server is reached through a TLS-terminating reverse proxy / CDN.
                         </p>
                       </div>
                     )}

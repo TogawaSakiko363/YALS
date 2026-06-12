@@ -144,29 +144,26 @@ if [[ "$1" == "update" ]]; then
   echo "========== YALS AGENT 更新模式 =========="
   shift
 
+  # 更新模式只重建二进制并重启，复用已有的 systemd 服务（其中已含原安装参数），
+  # 因此不需要 --server-host/--server-port/--uuid/--token；仅接受可选的构建源参数。
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --server-host) SERVER_HOST="$2"; shift 2;;
-      --server-port) SERVER_PORT="$2"; shift 2;;
-      --uuid) AGENT_UUID="$2"; shift 2;;
-      --token) AGENT_TOKEN="$2"; shift 2;;
       --repo) REPO_URL="$2"; shift 2;;
       --ref) REPO_REF="$2"; shift 2;;
       *)
         echo "未知参数: $1"
-        echo "更新模式用法: sudo ./install_agent.sh update --server-host <host> --server-port <port> --uuid <uuid> --token <token>"
+        echo "更新模式用法: sudo ./install_agent.sh update [--repo <git地址或本地路径>] [--ref <分支/标签>]"
         exit 1
         ;;
     esac
   done
 
-  if [[ -z "$SERVER_HOST" || -z "$SERVER_PORT" || -z "$AGENT_UUID" || -z "$AGENT_TOKEN" ]]; then
-    echo "[ERROR] 更新模式缺少必要参数"
+  if [[ ! -f "$SERVICE_FILE" ]]; then
+    echo "[ERROR] 未找到现有服务 $SERVICE_FILE，请先用完整参数执行一次安装"
     exit 1
   fi
 
   build_and_install
-  write_service
   systemctl daemon-reload
   systemctl restart yals_agent.service || echo "[WARN] 无法重启服务，请检查 systemd 状态"
 
