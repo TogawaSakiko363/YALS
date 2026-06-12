@@ -26,7 +26,7 @@ type AgentMetrics struct {
 
 // UpsertAgentMetrics stores the latest metrics snapshot for an agent.
 func (s *Store) UpsertAgentMetrics(m AgentMetrics) error {
-	_, err := s.db.Exec(`
+	_, err := s.dbW.Exec(`
 INSERT INTO agent_metrics (agent_uuid, updated_at, cpu_percent, mem_used, mem_total, disk_used, disk_total, net_up_rate, net_down_rate, net_up_total, net_down_total, uptime_sec)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(agent_uuid) DO UPDATE SET
@@ -50,7 +50,7 @@ ON CONFLICT(agent_uuid) DO UPDATE SET
 
 // ListAgentMetrics returns the latest metrics snapshot per agent, keyed by UUID.
 func (s *Store) ListAgentMetrics() (map[string]AgentMetrics, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.dbR.Query(`
 SELECT agent_uuid, updated_at, cpu_percent, mem_used, mem_total, disk_used, disk_total, net_up_rate, net_down_rate, net_up_total, net_down_total, uptime_sec
 FROM agent_metrics
 `)
@@ -76,7 +76,7 @@ FROM agent_metrics
 
 // DeleteAgentMetrics removes a deleted agent's metrics snapshot.
 func (s *Store) DeleteAgentMetrics(uuid string) error {
-	_, err := s.db.Exec(`DELETE FROM agent_metrics WHERE agent_uuid = ?`, strings.TrimSpace(uuid))
+	_, err := s.dbW.Exec(`DELETE FROM agent_metrics WHERE agent_uuid = ?`, strings.TrimSpace(uuid))
 	return err
 }
 
@@ -96,7 +96,7 @@ func (s *Store) InsertProbeResults(rows []ProbeResultRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.dbW.Begin()
 	if err != nil {
 		return fmt.Errorf("begin probe insert: %w", err)
 	}
@@ -117,7 +117,7 @@ func (s *Store) InsertProbeResults(rows []ProbeResultRow) error {
 
 // PruneProbeResults deletes probe results older than the given unix timestamp.
 func (s *Store) PruneProbeResults(beforeTS int64) error {
-	_, err := s.db.Exec(`DELETE FROM probe_results WHERE ts < ?`, beforeTS)
+	_, err := s.dbW.Exec(`DELETE FROM probe_results WHERE ts < ?`, beforeTS)
 	if err != nil {
 		return fmt.Errorf("prune probe results: %w", err)
 	}
@@ -128,7 +128,7 @@ func (s *Store) PruneProbeResults(beforeTS int64) error {
 // Called after targets.yaml changes so renamed/removed targets drop their data.
 func (s *Store) PurgeProbeTargets(keepNames map[string]bool) error {
 	if len(keepNames) == 0 {
-		_, err := s.db.Exec(`DELETE FROM probe_results`)
+		_, err := s.dbW.Exec(`DELETE FROM probe_results`)
 		return err
 	}
 	placeholders := make([]string, 0, len(keepNames))
@@ -138,7 +138,7 @@ func (s *Store) PurgeProbeTargets(keepNames map[string]bool) error {
 		args = append(args, name)
 	}
 	query := fmt.Sprintf(`DELETE FROM probe_results WHERE target_name NOT IN (%s)`, strings.Join(placeholders, ","))
-	if _, err := s.db.Exec(query, args...); err != nil {
+	if _, err := s.dbW.Exec(query, args...); err != nil {
 		return fmt.Errorf("purge probe targets: %w", err)
 	}
 	return nil
@@ -160,7 +160,7 @@ type ProbeAggregate struct {
 // cycles, and loss inputs (sent/recv totals). Uses window functions to do it in a
 // single pass.
 func (s *Store) QueryProbeAggregates(agentName string, sinceTS int64) ([]ProbeAggregate, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.dbR.Query(`
 SELECT target_name, latest_ms, latest_recv, avg_ms, worst_ms, total_sent, total_recv FROM (
     SELECT
         target_name,
@@ -212,7 +212,7 @@ type ProbeSeriesPoint struct {
 // QueryProbeSeries returns one target's per-cycle latency over a time window for
 // one agent, oldest first, for the latency chart.
 func (s *Store) QueryProbeSeries(agentName, targetName string, sinceTS int64) ([]ProbeSeriesPoint, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.dbR.Query(`
 SELECT ts, latency_ms, recv FROM probe_results
 WHERE agent_name = ? AND target_name = ? AND ts >= ?
 ORDER BY ts ASC
@@ -243,7 +243,7 @@ const probeSettingsKey = "probe_settings"
 // GetProbeSettings returns the stored probe settings, or defaults on first use.
 func (s *Store) GetProbeSettings() (ProbeSettings, error) {
 	settings := ProbeSettings{IntervalSec: 60}
-	row := s.db.QueryRow(`SELECT value_json FROM runtime_settings WHERE key = ?`, probeSettingsKey)
+	row := s.dbR.QueryRow(`SELECT value_json FROM runtime_settings WHERE key = ?`, probeSettingsKey)
 	var payload string
 	if err := row.Scan(&payload); err != nil {
 		if err == sql.ErrNoRows {
@@ -270,7 +270,7 @@ func (s *Store) UpsertProbeSettings(settings ProbeSettings) (ProbeSettings, erro
 		return settings, fmt.Errorf("marshal probe settings: %w", err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err = s.db.Exec(`
+	_, err = s.dbW.Exec(`
 INSERT INTO runtime_settings (key, value_json, updated_at)
 VALUES (?, ?, ?)
 ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at

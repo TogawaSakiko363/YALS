@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"YALS/internal/logger"
@@ -21,8 +22,21 @@ const (
 	probePruneInterval   = 10 * time.Minute
 )
 
+// reportQueueSize bounds the in-flight agent reports awaiting persistence. At
+// hundreds of agents this is far above the steady-state backlog; if it ever
+// fills (a sustained DB stall) reports are dropped rather than growing memory.
+const reportQueueSize = 4096
+
+// reportJob is one queued agent report. Exactly one of metrics/probe is set.
+type reportJob struct {
+	uuid    string
+	metrics *proto.SystemMetrics
+	probe   *proto.ProbeBatch
+}
+
 // InitProbing loads targets.yaml + probe settings, wires agent report sinks to
-// the store, and starts the hot-reload poller and the retention pruner.
+// the store, starts the async report writer, and starts the hot-reload poller
+// and the retention pruner.
 func (h *Handler) InitProbing(targetsPath string) {
 	h.probePath = targetsPath
 
@@ -34,6 +48,9 @@ func (h *Handler) InitProbing(targetsPath string) {
 	h.probeInterval = settings.IntervalSec
 	h.probeMu.Unlock()
 
+	h.reportQueue = make(chan reportJob, reportQueueSize)
+	go h.runReportWriter()
+
 	h.agentManager.SetReportHandlers(h.storeMetricsReport, h.storeProbeReport)
 
 	h.reloadTargets(true)
@@ -42,7 +59,43 @@ func (h *Handler) InitProbing(targetsPath string) {
 	go h.runProbePruner()
 }
 
+// runReportWriter is the single goroutine that persists queued agent reports, so
+// the per-agent gRPC receive loops never block on the database.
+func (h *Handler) runReportWriter() {
+	for job := range h.reportQueue {
+		switch {
+		case job.metrics != nil:
+			h.writeMetricsReport(job.uuid, *job.metrics)
+		case job.probe != nil:
+			h.writeProbeReport(job.uuid, *job.probe)
+		}
+	}
+}
+
+// storeMetricsReport / storeProbeReport are the report-handler callbacks invoked
+// from each agent's receive loop. They only enqueue, so a DB stall cannot stall
+// ingestion. enqueue drops (and counts) when the queue is full.
 func (h *Handler) storeMetricsReport(uuid string, m proto.SystemMetrics) {
+	mc := m
+	h.enqueueReport(reportJob{uuid: uuid, metrics: &mc})
+}
+
+func (h *Handler) storeProbeReport(uuid string, batch proto.ProbeBatch) {
+	bc := batch
+	h.enqueueReport(reportJob{uuid: uuid, probe: &bc})
+}
+
+func (h *Handler) enqueueReport(job reportJob) {
+	select {
+	case h.reportQueue <- job:
+	default:
+		if d := atomic.AddUint64(&h.reportsDropped, 1); d%1000 == 1 {
+			logger.Warnf("Report queue full; dropped %d agent reports so far (DB cannot keep up)", d)
+		}
+	}
+}
+
+func (h *Handler) writeMetricsReport(uuid string, m proto.SystemMetrics) {
 	if err := h.store.UpsertAgentMetrics(serverstore.AgentMetrics{
 		AgentUUID:    uuid,
 		CPUPercent:   m.CPUPercent,
@@ -60,7 +113,7 @@ func (h *Handler) storeMetricsReport(uuid string, m proto.SystemMetrics) {
 	}
 }
 
-func (h *Handler) storeProbeReport(uuid string, batch proto.ProbeBatch) {
+func (h *Handler) writeProbeReport(uuid string, batch proto.ProbeBatch) {
 	name := h.agentManager.NameByUUID(uuid)
 	rows := make([]serverstore.ProbeResultRow, 0, len(batch.Results))
 	for _, r := range batch.Results {
@@ -199,17 +252,11 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]statusItem, 0)
-	for _, a := range h.agentManager.GetAgents() {
-		uuid, _ := a["uuid"].(string)
-		name, _ := a["name"].(string)
-		statusVal, _ := a["status"].(int)
-		group := ""
-		if details, ok := a["details"].(map[string]any); ok {
-			group, _ = details["group"].(string)
-		}
-		item := statusItem{UUID: uuid, Name: name, Group: group, Online: statusVal == 1}
-		if m, ok := metricsByUUID[uuid]; ok {
+	statuses := h.agentManager.GetAgentStatusList()
+	items := make([]statusItem, 0, len(statuses))
+	for _, a := range statuses {
+		item := statusItem{UUID: a.UUID, Name: a.Name, Group: a.Group, Online: a.Online}
+		if m, ok := metricsByUUID[a.UUID]; ok {
 			snapshot := m
 			item.Metrics = &snapshot
 		}

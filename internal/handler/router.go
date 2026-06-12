@@ -47,6 +47,12 @@ type Handler struct {
 	probeInterval int
 	probePath     string
 	probeModTime  time.Time
+
+	// Asynchronous report ingestion: agent metric/probe reports are enqueued here
+	// and persisted by a single writer goroutine, so an agent's gRPC receive loop
+	// never blocks on DB latency. A full queue drops (and counts) to bound memory.
+	reportQueue    chan reportJob
+	reportsDropped uint64
 }
 
 // NewHandler creates a new handler

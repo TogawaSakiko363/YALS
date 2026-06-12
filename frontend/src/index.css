@@ -1360,9 +1360,12 @@ div[ref="terminalRef"] {
 }
 
 .latency-chart-svg {
-  width: 100%;
-  height: 140px;
   display: block;
+}
+
+.latency-chart-axis-label {
+  fill: #9ca3af;
+  font-size: 10px;
 }
 
 .latency-chart-caption {
@@ -1379,6 +1382,10 @@ div[ref="terminalRef"] {
   text-align: center;
   color: #9ca3af;
   font-size: 0.8125rem;
+}
+
+.latency-chart-loss {
+  color: #ef4444;
 }
 
 .probe-loss.ok {

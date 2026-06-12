@@ -412,6 +412,33 @@ func (m *Manager) GetAgentCommands(agentName string) []validator.CommandDetail {
 	return commands
 }
 
+// AgentStatusLite is the minimal per-agent status used by the Status page.
+type AgentStatusLite struct {
+	UUID   string
+	Name   string
+	Group  string
+	Online bool
+}
+
+// GetAgentStatusList returns a lightweight status row per agent. It avoids the
+// full per-agent map (command arrays, formatted timestamps, etc.) that GetAgents
+// builds, which matters when the Status page polls every few seconds at scale.
+func (m *Manager) GetAgentStatusList() []AgentStatusLite {
+	m.agentsLock.RLock()
+	defer m.agentsLock.RUnlock()
+
+	list := make([]AgentStatusLite, 0, len(m.agents))
+	for name, agent := range m.agents {
+		list = append(list, AgentStatusLite{
+			UUID:   agent.UUID,
+			Name:   name,
+			Group:  agent.Group,
+			Online: agent.Status() == StatusConnected,
+		})
+	}
+	return list
+}
+
 // GetAgentStats returns statistics about agents.
 func (m *Manager) GetAgentStats() map[string]any {
 	m.agentsLock.RLock()

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -49,8 +50,16 @@ type AgentUpsertInput struct {
 }
 
 // Store provides SQLite-backed persistence for control-plane data.
+//
+// It keeps two connection pools over the same WAL-mode database: dbW is a single
+// writer connection (SQLite allows only one writer), and dbR is a pool of reader
+// connections. Under WAL, readers never block the writer and vice versa, so the
+// heavy probe aggregate/series reads run concurrently with the high-frequency
+// agent metric/probe writes instead of serializing behind them. Writes/DDL use
+// dbW; pure SELECTs use dbR. Auto-committed writes are visible to dbR immediately.
 type Store struct {
-	db *sql.DB
+	dbW *sql.DB
+	dbR *sql.DB
 }
 
 // NewStore opens the SQLite database and initializes schema.
@@ -64,30 +73,69 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", cleanPath)
+	// PRAGMAs are encoded in the DSN so every pooled connection applies them.
+	// WAL + synchronous=NORMAL removes the per-commit full fsync that dominated
+	// write cost; busy_timeout absorbs brief contention; the rest reduce I/O.
+	pragmas := strings.Join([]string{
+		"_pragma=journal_mode(WAL)",
+		"_pragma=synchronous(NORMAL)",
+		"_pragma=busy_timeout(5000)",
+		"_pragma=temp_store(MEMORY)",
+		"_pragma=cache_size(-16000)", // ~16MB page cache per connection
+		"_pragma=foreign_keys(ON)",
+		"_pragma=mmap_size(268435456)", // 256MB
+	}, "&")
+	dsn := cleanPath + "?" + pragmas
+
+	dbW, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite database: %w", err)
+		return nil, fmt.Errorf("open sqlite writer: %w", err)
 	}
+	// SQLite permits a single writer; pin the writer pool to one connection.
+	dbW.SetMaxOpenConns(1)
+	dbW.SetMaxIdleConns(1)
+	dbW.SetConnMaxLifetime(0)
 
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(0)
+	dbR, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		_ = dbW.Close()
+		return nil, fmt.Errorf("open sqlite reader: %w", err)
+	}
+	readConns := runtime.NumCPU()
+	if readConns < 4 {
+		readConns = 4
+	}
+	dbR.SetMaxOpenConns(readConns)
+	dbR.SetMaxIdleConns(readConns)
+	dbR.SetConnMaxLifetime(0)
 
-	store := &Store{db: db}
+	store := &Store{dbW: dbW, dbR: dbR}
 	if err := store.initSchema(); err != nil {
-		_ = db.Close()
+		_ = dbW.Close()
+		_ = dbR.Close()
 		return nil, err
 	}
 
 	return store, nil
 }
 
-// Close closes the underlying database.
+// Close closes both connection pools.
 func (s *Store) Close() error {
-	if s == nil || s.db == nil {
+	if s == nil {
 		return nil
 	}
-	return s.db.Close()
+	var firstErr error
+	if s.dbR != nil {
+		if err := s.dbR.Close(); err != nil {
+			firstErr = err
+		}
+	}
+	if s.dbW != nil {
+		if err := s.dbW.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (s *Store) initSchema() error {
@@ -134,12 +182,19 @@ func (s *Store) initSchema() error {
 			sent INTEGER NOT NULL DEFAULT 0,
 			recv INTEGER NOT NULL DEFAULT 0
 		);`,
-		`CREATE INDEX IF NOT EXISTS idx_probe_results_query ON probe_results(agent_name, ts);`,
-		`CREATE INDEX IF NOT EXISTS idx_probe_results_target ON probe_results(target_name);`,
+		// (agent_name, target_name, ts) serves the series query (exact prefix) and
+		// the aggregate query (agent_name prefix, already grouped/ordered the way
+		// the window functions partition, avoiding a sort). (ts) lets the retention
+		// pruner range-delete instead of full-scanning. The old single-purpose
+		// indexes are dropped to cut per-insert index maintenance on the hot table.
+		`CREATE INDEX IF NOT EXISTS idx_probe_results_atts ON probe_results(agent_name, target_name, ts);`,
+		`CREATE INDEX IF NOT EXISTS idx_probe_results_ts ON probe_results(ts);`,
+		`DROP INDEX IF EXISTS idx_probe_results_query;`,
+		`DROP INDEX IF EXISTS idx_probe_results_target;`,
 	}
 
 	for _, stmt := range statements {
-		if _, err := s.db.Exec(stmt); err != nil {
+		if _, err := s.dbW.Exec(stmt); err != nil {
 			lowerErr := strings.ToLower(err.Error())
 			if strings.Contains(lowerErr, "duplicate column name") || strings.Contains(lowerErr, "already exists") {
 				continue
@@ -160,7 +215,7 @@ func (s *Store) UpsertRuntimeSettings(settings config.RuntimeSettings) (*config.
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err = s.db.Exec(`
+	_, err = s.dbW.Exec(`
 INSERT INTO runtime_settings (key, value_json, updated_at)
 VALUES (?, ?, ?)
 ON CONFLICT(key) DO UPDATE SET
@@ -176,7 +231,7 @@ ON CONFLICT(key) DO UPDATE SET
 
 // GetRuntimeSettings loads persisted runtime settings.
 func (s *Store) GetRuntimeSettings() (*config.RuntimeSettings, error) {
-	row := s.db.QueryRow(`SELECT value_json FROM runtime_settings WHERE key = ?`, "server_runtime")
+	row := s.dbR.QueryRow(`SELECT value_json FROM runtime_settings WHERE key = ?`, "server_runtime")
 	var payload string
 	if err := row.Scan(&payload); err != nil {
 		return nil, err
@@ -243,7 +298,7 @@ func (s *Store) UpsertAgent(input AgentUpsertInput) (*AgentRecord, error) {
 		return nil, errors.New("agent uuid is required")
 	}
 
-	_, err = s.db.Exec(`
+	_, err = s.dbW.Exec(`
 INSERT INTO agents (uuid, token, name, group_name, details_json, commands_json, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(uuid) DO UPDATE SET
@@ -263,7 +318,7 @@ ON CONFLICT(uuid) DO UPDATE SET
 
 // GetAgentByUUID returns a stored agent by UUID.
 func (s *Store) GetAgentByUUID(uuid string) (*AgentRecord, error) {
-	row := s.db.QueryRow(`
+	row := s.dbR.QueryRow(`
 SELECT uuid, token, name, group_name, details_json, commands_json, created_at, updated_at
 FROM agents
 WHERE uuid = ?
@@ -274,7 +329,7 @@ WHERE uuid = ?
 
 // GetAgentByName returns a stored agent by name.
 func (s *Store) GetAgentByName(name string) (*AgentRecord, error) {
-	row := s.db.QueryRow(`
+	row := s.dbR.QueryRow(`
 SELECT uuid, token, name, group_name, details_json, commands_json, created_at, updated_at
 FROM agents
 WHERE name = ?
@@ -285,7 +340,7 @@ WHERE name = ?
 
 // ListAgents returns all stored agents sorted by group and name.
 func (s *Store) ListAgents() ([]AgentRecord, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.dbR.Query(`
 SELECT uuid, token, name, group_name, details_json, commands_json, created_at, updated_at
 FROM agents
 ORDER BY group_name ASC, name ASC
@@ -313,7 +368,7 @@ ORDER BY group_name ASC, name ASC
 
 // DeleteAgent removes an agent from persistence.
 func (s *Store) DeleteAgent(uuid string) error {
-	result, err := s.db.Exec(`DELETE FROM agents WHERE uuid = ?`, strings.TrimSpace(uuid))
+	result, err := s.dbW.Exec(`DELETE FROM agents WHERE uuid = ?`, strings.TrimSpace(uuid))
 	if err != nil {
 		return fmt.Errorf("delete agent: %w", err)
 	}
