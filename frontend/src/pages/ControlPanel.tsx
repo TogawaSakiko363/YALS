@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Save, Trash2, Shield, Server, KeyRound, Settings, RefreshCw, ChevronUp, ChevronDown, LogOut, Pencil, X, Activity, Home } from 'lucide-react';
+import { Plus, Save, Trash2, Shield, Server, Settings, ChevronUp, ChevronDown, LogOut, Pencil, X, Activity, Home, Download, Copy, Check } from 'lucide-react';
 import { CustomConfig } from '../hooks/useCustomConfig';
 import { useYalsClient } from '../hooks/useYalsClient';
 import { AgentCommand, AgentConfigPayload, AgentConfigRecord, RuntimeSettings, ProbeTarget } from '../types/yals';
@@ -65,6 +65,41 @@ function validateAgentForm(agent: AgentConfigPayload): string | null {
   return null;
 }
 
+// buildInstallCommand returns the one-line installer the operator runs on the
+// agent host. It pulls install_agent.sh from the repo and runs it with this
+// server's address (derived from the panel's own URL) plus the agent's uuid/token.
+function buildInstallCommand(uuid: string, token: string): string {
+  const host = window.location.hostname || 'example.com';
+  const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+  return `curl -fsSL https://raw.githubusercontent.com/TogawaSakiko363/YALS/refs/heads/main/install_agent.sh | sudo bash -s -- --server-host ${host} --server-port ${port} --uuid ${uuid} --token ${token}`;
+}
+
+// copyToClipboard copies text using the async Clipboard API, falling back to a
+// hidden textarea + execCommand for non-secure contexts / older browsers.
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through to the legacy path
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 export function ControlPanel({ config }: ControlPanelProps) {
   const {
     isControlAuthenticated,
@@ -94,6 +129,7 @@ export function ControlPanel({ config }: ControlPanelProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingTargets, setEditingTargets] = useState<ProbeTarget[]>([]);
   const [editingInterval, setEditingInterval] = useState(60);
+  const [copiedUuid, setCopiedUuid] = useState<string | null>(null);
 
   // Single place that loads control-plane data once the session is
   // authenticated. editingRuntime is kept in sync from runtimeSettings by the
@@ -126,17 +162,11 @@ export function ControlPanel({ config }: ControlPanelProps) {
     setEditingRuntime(runtimeSettings);
   }, [runtimeSettings]);
 
-  const generateRandomToken = () => {
-    // This token becomes the agent's authentication secret, so it must be
-    // generated with a CSPRNG rather than the predictable Math.random().
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
-    const randomValues = new Uint32Array(24);
-    crypto.getRandomValues(randomValues);
-    let result = '';
-    for (let i = 0; i < 24; i += 1) {
-      result += chars.charAt(randomValues[i] % chars.length);
+  const handleCopyInstall = async (uuid: string, token: string) => {
+    if (await copyToClipboard(buildInstallCommand(uuid, token))) {
+      setCopiedUuid(uuid);
+      window.setTimeout(() => setCopiedUuid((cur) => (cur === uuid ? null : cur)), 2000);
     }
-    setEditingAgent((prev) => ({ ...prev, token: result }));
   };
 
   const handleControlLogin = async () => {
@@ -312,7 +342,7 @@ export function ControlPanel({ config }: ControlPanelProps) {
         details: saved.details,
         commands: saved.commands
       });
-      setControlMessage(`Agent saved. UUID: ${saved.uuid}, Token: ${saved.token}`);
+      setControlMessage('Agent saved. Use the Install Command below to deploy it.');
     } catch (error: unknown) {
       setControlError(getErrorMessage(error) || 'Failed to save agent');
     }
@@ -438,6 +468,11 @@ export function ControlPanel({ config }: ControlPanelProps) {
                           <td className="text-gray-500">{record.updated_at ? new Date(record.updated_at).toLocaleString() : '—'}</td>
                           <td>
                             <div className="control-row-actions">
+                              <button type="button" className="control-icon-button" onClick={() => handleCopyInstall(record.uuid, record.token)} title="Copy install command">
+                                {copiedUuid === record.uuid
+                                  ? <><Check className="w-3.5 h-3.5" /> Copied</>
+                                  : <><Download className="w-3.5 h-3.5" /> Install</>}
+                              </button>
                               <button type="button" className="control-icon-button" onClick={() => startEditAgent(record)}>
                                 <Pencil className="w-3.5 h-3.5" /> Edit
                               </button>
@@ -758,25 +793,6 @@ export function ControlPanel({ config }: ControlPanelProps) {
                       })}
                     </div>
 
-                    <div className="rounded-md border border-gray-200 p-4 bg-gray-50">
-                      <div className="flex items-center gap-2 mb-2 text-sm font-semibold text-gray-900">
-                        <KeyRound className="w-4 h-4" /> Agent Token
-                      </div>
-                      <FieldLabel>Authentication Token</FieldLabel>
-                      <div className="flex gap-2 items-center">
-                        <input
-                          className="command-target-input"
-                          placeholder="Authentication token"
-                          value={editingAgent.token}
-                          onChange={(e) => setEditingAgent((prev) => ({ ...prev, token: e.target.value }))}
-                        />
-                        <button className="command-button primary" type="button" onClick={generateRandomToken}>
-                          <RefreshCw className="w-4 h-4" /> Generate 24-Character Token
-                        </button>
-                      </div>
-                      <p className="text-xs text-gray-500 mt-2">UUID is used for mapping and identification. Token is used for agent authentication.</p>
-                    </div>
-
                     {controlError && <div className="command-status error">{controlError}</div>}
                     {controlMessage && <div className="command-status success">{controlMessage}</div>}
 
@@ -791,13 +807,22 @@ export function ControlPanel({ config }: ControlPanelProps) {
                       )}
                     </div>
 
-                    <div className="rounded-md bg-gray-50 border border-gray-200 p-4 text-sm text-gray-700 space-y-2">
-                      <p className="font-semibold">Install Command Example</p>
-                      <code>yals_agent -s {window.location.hostname || 'example.com'} -p {window.location.port || '443'} -u {editingAgent.uuid || '[UUID after save]'} -t {editingAgent.token || '[Token]'}</code>
-                      <p className="text-xs text-gray-500">
-                        The agent verifies the server using the built-in certificate that both ship with — no extra TLS parameters are needed.
-                      </p>
-                    </div>
+                    {editingAgent.uuid && editingAgent.token && (
+                      <div className="rounded-md bg-gray-50 border border-gray-200 p-4 text-sm text-gray-700 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-semibold">Install Command</p>
+                          <button type="button" className="control-icon-button" onClick={() => handleCopyInstall(editingAgent.uuid!, editingAgent.token)} title="Copy install command">
+                            {copiedUuid === editingAgent.uuid
+                              ? <><Check className="w-3.5 h-3.5" /> Copied</>
+                              : <><Copy className="w-3.5 h-3.5" /> Copy</>}
+                          </button>
+                        </div>
+                        <code className="block break-all">{buildInstallCommand(editingAgent.uuid, editingAgent.token)}</code>
+                        <p className="text-xs text-gray-500">
+                          Run this on the agent host. It pulls and builds the agent, then registers it as a systemd service. The agent verifies the server using the built-in certificate that both ship with — no extra TLS parameters are needed.
+                        </p>
+                      </div>
+                    )}
               </div>
             </div>
           </>

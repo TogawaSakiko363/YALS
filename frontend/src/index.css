@@ -1123,6 +1123,11 @@ div[ref="terminalRef"] {
   padding: 1.25rem;
   overflow-y: auto;
   flex: 1;
+  /* Space the major form sections (fields, commands, actions, install command)
+     evenly — without this the top-level blocks stack with no gap and cramp. */
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
 }
 
 /* Narrow screens: sidebar becomes a top bar */

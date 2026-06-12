@@ -214,7 +214,7 @@ export function ProbesPage({ config }: ProbesPageProps) {
                         <tr>
                           <td colSpan={9} className="probes-chart-cell">
                             {series[r.name]
-                              ? <LatencyChart points={series[r.name]} />
+                              ? <LatencyChart points={series[r.name]} name={r.name} />
                               : <div className="latency-chart-empty">Loading…</div>}
                           </td>
                         </tr>
