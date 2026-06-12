@@ -856,6 +856,9 @@ div[ref="terminalRef"] {
   display: flex;
   min-height: 100vh;
   background-color: #f3f4f6;
+  /* Never let the page itself scroll sideways (which pushed the mobile top bar
+     off-screen); wide tables scroll inside their own .control-table-wrap. */
+  overflow-x: hidden;
 }
 
 /* Dark sidebar */
@@ -946,6 +949,7 @@ div[ref="terminalRef"] {
 .control-body {
   padding: 1.5rem;
   flex: 1;
+  min-width: 0;
 }
 
 /* Agent table */
@@ -954,9 +958,16 @@ div[ref="terminalRef"] {
   border: 1px solid #e5e7eb;
   border-radius: var(--radius);
   /* Scroll wide tables horizontally (drag on touch / portrait) instead of
-     clipping or cramming the columns. */
+     clipping or cramming the columns. The scrollbar itself is hidden. */
+  max-width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* old Edge */
+}
+
+.control-table-wrap::-webkit-scrollbar {
+  display: none; /* Chrome / Safari */
 }
 
 .control-table {

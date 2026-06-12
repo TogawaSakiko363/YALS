@@ -14,7 +14,7 @@ interface ProbesPageProps {
 
 const WINDOWS = ['1h', '6h', '12h', '24h'];
 
-type SortKey = 'latest' | 'avg' | 'worst' | 'loss';
+type SortKey = 'latest' | 'avg' | 'worst' | 'jitter' | 'loss';
 
 // metricValue returns the sortable numeric value of a column for a row, or null
 // when that row has no data for it (null rows always sort to the bottom).
@@ -23,6 +23,7 @@ function metricValue(r: ProbeRow, key: SortKey): number | null {
     case 'latest': return r.has_latest ? r.latest_ms : null;
     case 'avg': return r.has_avg ? r.avg_ms : null;
     case 'worst': return r.has_worst ? r.worst_ms : null;
+    case 'jitter': return r.has_jitter ? r.jitter_ms : null;
     case 'loss': return r.has_data ? r.loss_pct : null;
   }
 }
@@ -216,7 +217,7 @@ export function ProbesPage({ config }: ProbesPageProps) {
                   <th>Location</th>
                   <th>ISP</th>
                   <th>Protocol</th>
-                  {([['latest', 'Latest'], ['avg', 'Avg'], ['worst', 'Worst'], ['loss', 'Loss']] as [SortKey, string][]).map(([key, label]) => (
+                  {([['latest', 'Latest'], ['avg', 'Avg'], ['worst', 'Worst'], ['jitter', 'Jitter'], ['loss', 'Loss']] as [SortKey, string][]).map(([key, label]) => (
                     <th key={key} className="probes-th-sortable" onClick={() => toggleSort(key)} title={`Sort by ${label}`}>
                       {label}{sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
                     </th>
@@ -237,6 +238,7 @@ export function ProbesPage({ config }: ProbesPageProps) {
                         <td>{r.has_latest ? `${r.latest_ms.toFixed(1)} ms` : '—'}</td>
                         <td>{r.has_avg ? `${r.avg_ms.toFixed(1)} ms` : '—'}</td>
                         <td>{r.has_worst ? `${r.worst_ms.toFixed(1)} ms` : '—'}</td>
+                        <td>{r.has_jitter ? `${r.jitter_ms.toFixed(1)} ms` : '—'}</td>
                         <td>{r.has_data ? <span className={lossClass(r.loss_pct)}>{r.loss_pct.toFixed(0)}%</span> : '—'}</td>
                         <td>
                           <button
@@ -252,7 +254,7 @@ export function ProbesPage({ config }: ProbesPageProps) {
                       </tr>
                       {isOpen && (
                         <tr>
-                          <td colSpan={9} className="probes-chart-cell">
+                          <td colSpan={10} className="probes-chart-cell">
                             {series[r.name]
                               ? <LatencyChart points={series[r.name]} name={r.name} />
                               : <div className="latency-chart-empty">Loading…</div>}
@@ -264,7 +266,7 @@ export function ProbesPage({ config }: ProbesPageProps) {
                 })}
                 {sortedRows.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="control-table-empty">
+                    <td colSpan={10} className="control-table-empty">
                       {rows.length === 0 ? 'No probe data yet for this agent.' : 'No targets match the selected filters.'}
                     </td>
                   </tr>

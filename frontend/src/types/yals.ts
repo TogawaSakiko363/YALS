@@ -162,6 +162,8 @@ export interface ProbeRow {
   has_avg: boolean;
   worst_ms: number;
   has_worst: boolean;
+  jitter_ms: number;
+  has_jitter: boolean;
   loss_pct: number;
 }
 

@@ -301,6 +301,8 @@ type probeRow struct {
 	HasAvg    bool    `json:"has_avg"`
 	WorstMs   float64 `json:"worst_ms"`
 	HasWorst  bool    `json:"has_worst"`
+	JitterMs  float64 `json:"jitter_ms"`
+	HasJitter bool    `json:"has_jitter"`
 	LossPct   float64 `json:"loss_pct"`
 }
 
@@ -361,6 +363,8 @@ func (h *Handler) handleProbes(w http.ResponseWriter, r *http.Request) {
 			row.AvgMs = agg.AvgMs
 			row.HasWorst = agg.Recv > 0
 			row.WorstMs = agg.WorstMs
+			row.HasJitter = agg.Recv > 1
+			row.JitterMs = agg.JitterMs
 			row.LossPct = float64(agg.Sent-agg.Recv) / float64(agg.Sent) * 100
 		}
 		rows = append(rows, row)

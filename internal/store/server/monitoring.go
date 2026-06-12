@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -151,6 +152,7 @@ type ProbeAggregate struct {
 	LatestRecv int     `json:"latest_recv"`
 	AvgMs      float64 `json:"avg_ms"`
 	WorstMs    float64 `json:"worst_ms"`
+	JitterMs   float64 `json:"jitter_ms"` // population stddev of latency over the window
 	Sent       int     `json:"sent"`
 	Recv       int     `json:"recv"`
 }
@@ -161,13 +163,14 @@ type ProbeAggregate struct {
 // single pass.
 func (s *Store) QueryProbeAggregates(agentName string, sinceTS int64) ([]ProbeAggregate, error) {
 	rows, err := s.dbR.Query(`
-SELECT target_name, latest_ms, latest_recv, avg_ms, worst_ms, total_sent, total_recv FROM (
+SELECT target_name, latest_ms, latest_recv, avg_ms, worst_ms, avg_sq, total_sent, total_recv FROM (
     SELECT
         target_name,
         FIRST_VALUE(latency_ms) OVER w AS latest_ms,
         FIRST_VALUE(recv) OVER w AS latest_recv,
         AVG(CASE WHEN recv > 0 THEN latency_ms END) OVER (PARTITION BY target_name) AS avg_ms,
         MAX(CASE WHEN recv > 0 THEN latency_ms END) OVER (PARTITION BY target_name) AS worst_ms,
+        AVG(CASE WHEN recv > 0 THEN latency_ms * latency_ms END) OVER (PARTITION BY target_name) AS avg_sq,
         SUM(sent) OVER (PARTITION BY target_name) AS total_sent,
         SUM(recv) OVER (PARTITION BY target_name) AS total_recv,
         ROW_NUMBER() OVER w AS rn
@@ -186,8 +189,8 @@ ORDER BY target_name
 	var result []ProbeAggregate
 	for rows.Next() {
 		var a ProbeAggregate
-		var avg, worst sql.NullFloat64
-		if err := rows.Scan(&a.TargetName, &a.LatestMs, &a.LatestRecv, &avg, &worst, &a.Sent, &a.Recv); err != nil {
+		var avg, worst, avgSq sql.NullFloat64
+		if err := rows.Scan(&a.TargetName, &a.LatestMs, &a.LatestRecv, &avg, &worst, &avgSq, &a.Sent, &a.Recv); err != nil {
 			return nil, err
 		}
 		if avg.Valid {
@@ -195,6 +198,12 @@ ORDER BY target_name
 		}
 		if worst.Valid {
 			a.WorstMs = worst.Float64
+		}
+		// Jitter = population stddev = sqrt(E[x^2] - E[x]^2) over received cycles.
+		if avg.Valid && avgSq.Valid {
+			if variance := avgSq.Float64 - avg.Float64*avg.Float64; variance > 0 {
+				a.JitterMs = math.Sqrt(variance)
+			}
 		}
 		result = append(result, a)
 	}
