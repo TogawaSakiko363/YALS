@@ -302,24 +302,27 @@ Plugin tools (e.g. `mtr`, `iperf3`) must be installed on the agent host.
 ## One-line install (systemd)
 
 The install scripts build from source on the target host (clone → compile →
-deploy → delete the source) and set up a systemd service. They need `git`, `go`
-(1.25+), and — for the server — `npm`/Node.js.
+deploy → delete the source) and set up a systemd service. They auto-detect the
+package manager (apt/dnf/yum/pacman/apk/zypper) and install any missing
+dependencies — `git`, Go (1.25+, fetched from go.dev if absent/old), and, for the
+server, Node.js (18+). systemd is required.
 
-**Server:**
+**Server** — pull and run the installer in one line:
 
 ```bash
-sudo ./install_server.sh \
-  --server-host 0.0.0.0 --server-port 8080 --server-password 'your_password'
-# update in place later:
+curl -fsSL https://raw.githubusercontent.com/TogawaSakiko363/YALS/refs/heads/main/install_server.sh \
+  | sudo bash -s -- --server-host 0.0.0.0 --server-port 8080 --server-password 'your_password'
+# update in place later (from a checkout):
 sudo ./install_server.sh update
 ```
 
-**Agent:**
+**Agent** — same pattern (or click **Install** on the agent's row in the control
+panel, which copies this command with the right uuid/token):
 
 ```bash
-sudo ./install_agent.sh \
-  --server-host lg.example.com --server-port 443 --uuid <uuid> --token <token>
-# update in place later:
+curl -fsSL https://raw.githubusercontent.com/TogawaSakiko363/YALS/refs/heads/main/install_agent.sh \
+  | sudo bash -s -- --server-host lg.example.com --server-port 443 --uuid <uuid> --token <token>
+# update in place later (from a checkout):
 sudo ./install_agent.sh update --server-host lg.example.com --server-port 443 --uuid <uuid> --token <token>
 ```
 
@@ -387,15 +390,17 @@ server hot-reloads it and pushes the new config to all online agents.
 
 ## Security notes
 
-- **TLS:** the server and agent ship with the **same built‑in self‑signed
-  certificate**. The agent verifies the server by pinning it (it accepts the
-  connection only if the server presents exactly that certificate), so the
-  agent↔server link is encrypted and authenticated with no configuration.
-  Trade‑off: the certificate's private key ships with the software, so it
-  protects against a casual man‑in‑the‑middle but **not** against an attacker who
-  has the binary (they could extract the key and impersonate the server). Agent
-  identity is still protected by the per‑agent token. For a browser‑trusted web
-  UI, terminate TLS at a reverse proxy in front of YALS.
+- **TLS:** the agent verifies the server with **standard CA validation** (the
+  host's system root store + hostname), exactly like a browser. No certificate is
+  committed to the repo; the server generates its own self‑signed certificate on
+  first start (persisted under `<data>/tls`) for its own listener. For a setup
+  that is trusted by both browsers and agents — including public deployments
+  behind a CDN — **terminate TLS at a reverse proxy / CDN holding a CA‑trusted
+  certificate for your domain** (e.g. Let's Encrypt); the agent will validate it.
+  The agent↔server link is a long‑lived gRPC/HTTP2 stream, so the proxy must use
+  `grpc_pass` with HTTP/2, and note that some CDNs break long‑lived gRPC streams
+  (consider pointing agents at the origin / a non‑proxied hostname). Agent
+  identity is additionally protected by the per‑agent token.
 - **Tokens & secrets:** control sessions and agent tokens are generated with a
   CSPRNG; the control password and agent/gRPC tokens are compared in constant
   time.

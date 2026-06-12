@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -82,15 +83,18 @@ func main() {
 	// and start the targets hot-reload watcher + retention pruner.
 	h.InitProbing("targets.yaml")
 
-	// Serve the built-in self-signed certificate. Agents embed and pin the same
-	// certificate, so the server and agents verify each other without any cert
-	// files or fingerprint parameters. Custom certificates are not supported.
-	serverCert, err := tls.X509KeyPair(yalstls.BuiltinCertPEM(), yalstls.BuiltinKeyPEM())
+	// Load (or generate and persist) this server's self-signed certificate. It is
+	// no longer committed to the repo; each instance has its own under <data>/tls.
+	// Agents verify the server with standard CA validation, so for a trusted setup
+	// (browsers and agents over the public internet) terminate TLS at a reverse
+	// proxy / CDN holding a CA-trusted certificate for the domain.
+	tlsDir := filepath.Join(filepath.Dir(cfg.Database.Path), "tls")
+	serverCert, err := yalstls.LoadOrGenerateServerCert(tlsDir, cfg.Server.Host)
 	if err != nil {
-		logger.Fatalf("Failed to load built-in TLS certificate: %v", err)
+		logger.Fatalf("Failed to load/generate TLS certificate: %v", err)
 	}
-	logger.Infof("Using built-in TLS certificate (agents verify the server by pinning it)")
-	logger.Warnf("Browsers will show an untrusted-certificate warning; put YALS behind a TLS-terminating proxy if you need a trusted certificate for the web UI")
+	logger.Infof("Using self-signed TLS certificate from %s", tlsDir)
+	logger.Warnf("Agents validate the server certificate against system CAs; terminate TLS with a CA-trusted certificate (reverse proxy / CDN) for public deployments")
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	grpcServer := newGRPCServer(*runtimeSettings)
