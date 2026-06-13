@@ -87,7 +87,7 @@ func (m *Manager) ExecuteCommandStreamingWithStopAndID(agentName, command, comma
 		IPVersion:   ipVersion,
 	}
 
-	if err := agent.stream.Send(req); err != nil {
+	if err := agent.sendLocked(req); err != nil {
 		return fmt.Errorf("failed to send command: %w", err)
 	}
 
@@ -98,7 +98,7 @@ func (m *Manager) ExecuteCommandStreamingWithStopAndID(agentName, command, comma
 				Type:      "stop_command",
 				CommandID: commandID,
 			}
-			agent.stream.Send(stopReq)
+			_ = agent.sendLocked(stopReq)
 			callback("", false, false, true)
 			return nil
 		case output := <-outputChan:
@@ -138,7 +138,7 @@ func (m *Manager) ExecuteCommandWithID(agentName, command, commandID, ipVersion 
 		IPVersion:   ipVersion,
 	}
 
-	if err := agent.stream.Send(req); err != nil {
+	if err := agent.sendLocked(req); err != nil {
 		return fmt.Errorf("failed to send command: %w", err)
 	}
 
@@ -161,7 +161,7 @@ func (m *Manager) StopCommand(agentName, commandID string) error {
 		CommandID: commandID,
 	}
 
-	if err := agent.stream.Send(req); err != nil {
+	if err := agent.sendLocked(req); err != nil {
 		return fmt.Errorf("failed to send stop command: %w", err)
 	}
 

@@ -4,7 +4,22 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title></title>
+    <script>
+      // Resolve the theme before first paint to avoid a flash of the wrong
+      // colors. Mode is 'light' | 'dark' | 'system' (default system).
+      (function () {
+        try {
+          var mode = localStorage.getItem('yals-theme') || 'system';
+          var dark = mode === 'dark' || (mode === 'system' &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        } catch (e) {
+          document.documentElement.dataset.theme = 'light';
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

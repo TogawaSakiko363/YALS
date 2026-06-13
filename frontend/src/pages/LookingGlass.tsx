@@ -66,7 +66,7 @@ export function LookingGlass({ config }: LookingGlassProps) {
   };
 
   return (
-    <div className="app-container" style={{ backgroundColor: config.backgroundColor }}>
+    <div className="app-container">
       <PageHeader config={config} active="home" />
 
       <main className="main-content">

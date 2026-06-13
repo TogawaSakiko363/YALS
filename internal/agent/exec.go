@@ -49,6 +49,12 @@ func (c *Client) executeCommandGRPC(stream proto.AgentService_StreamCommandsClie
 		IPVersion:   msg.IPVersion,
 	}
 
+	// Always signal completion exactly once when the command finishes, no matter
+	// which path it takes (validation/queue/plugin/shell error or success). The
+	// client only clears the Run/Stop button on a completion, so every error path
+	// must still complete.
+	defer c.sendCompletionGRPC(stream, req.CommandID)
+
 	fullCommand, cmd, cmdConfig, err := c.prepareCommand(req)
 	if err != nil {
 		c.sendErrorGRPC(stream, req.CommandID, err.Error())
@@ -74,8 +80,7 @@ func (c *Client) executeCommandGRPC(stream proto.AgentService_StreamCommandsClie
 		c.sendErrorGRPC(stream, req.CommandID, err.Error())
 		return
 	}
-
-	c.sendCompletionGRPC(stream, req.CommandID)
+	// completion is sent by the deferred sendCompletionGRPC above
 }
 
 // prepareCommand validates and prepares a command for execution
@@ -559,12 +564,11 @@ func (c *Client) executePluginCommandGRPC(stream proto.AgentService_StreamComman
 	c.storeActiveCommand(req.CommandID, dummyCmd, fullCommand, req.CommandName)
 	defer c.removeActiveCommand(req.CommandID)
 
+	// Completion is sent once by the caller (executeCommandGRPC's deferred
+	// sendCompletionGRPC), so the callback here only streams output/errors.
 	err := plugin.ExecutePluginCommand(pluginName, resolvedTarget, req.CommandID, func(output string, isError bool, isComplete bool) {
 		if isError {
 			c.sendErrorGRPC(stream, req.CommandID, output)
-		} else if isComplete {
-			c.sendOutputGRPC(stream, req.CommandID, output, false)
-			c.sendCompletionGRPC(stream, req.CommandID)
 		} else {
 			c.sendOutputGRPC(stream, req.CommandID, output, false)
 		}

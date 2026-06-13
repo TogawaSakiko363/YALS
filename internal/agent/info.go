@@ -492,11 +492,20 @@ func (m *Manager) buildAgentInfo(name string, agent *Agent) map[string]any {
 	agent.commandsLock.RLock()
 	commands := make([]map[string]any, len(agent.availableCommands))
 	for i, cmd := range agent.availableCommands {
+		// Report the EFFECTIVE ignore_target so the frontend gates the target
+		// input/Run button correctly: a plugin can force ignore_target regardless
+		// of the command's own flag.
+		ignoreTarget := cmd.IgnoreTarget
+		if cmd.UsePlugin != "" {
+			if hasOverride, pluginIgnore := plugin.GetPluginIgnoreTarget(cmd.UsePlugin); hasOverride {
+				ignoreTarget = pluginIgnore
+			}
+		}
 		commands[i] = map[string]any{
 			"name":          cmd.Name,
 			"template":      cmd.Template,
 			"use_plugin":    cmd.UsePlugin,
-			"ignore_target": cmd.IgnoreTarget,
+			"ignore_target": ignoreTarget,
 			"maxmium_queue": cmd.MaximumQueue,
 		}
 	}

@@ -1,13 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Plus, Save, Trash2, Shield, Server, Settings, ChevronUp, ChevronDown, LogOut, Pencil, X, Activity, Home, Download, Copy, Check, Menu } from 'lucide-react';
-import { CustomConfig } from '../hooks/useCustomConfig';
+import { Plus, Save, Trash2, Shield, Server, Settings, ChevronUp, ChevronDown, LogOut, Pencil, X, Activity, Home, Download, Copy, Check, Menu, Sun, Moon } from 'lucide-react';
+import { useTheme } from '../hooks/useTheme';
 import { useYalsClient } from '../hooks/useYalsClient';
 import { AgentCommand, AgentConfigPayload, AgentConfigRecord, RuntimeSettings, ProbeTarget } from '../types/yals';
 import { getErrorMessage } from '../utils/error';
-
-interface ControlPanelProps {
-  config: CustomConfig;
-}
 
 const createEmptyAgent = (): AgentConfigPayload => ({
   token: '',
@@ -30,7 +26,7 @@ const createEmptyAgent = (): AgentConfigPayload => ({
 });
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <label className="block text-sm font-medium text-gray-700 mb-1 text-left">{children}</label>;
+  return <label className="block text-sm font-medium u-text mb-1 text-left">{children}</label>;
 }
 
 function getCommandMode(command: AgentCommand): 'shell' | 'plugin' {
@@ -100,7 +96,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
-export function ControlPanel({ config }: ControlPanelProps) {
+export function ControlPanel() {
   const {
     isControlAuthenticated,
     managedAgents,
@@ -120,6 +116,8 @@ export function ControlPanel({ config }: ControlPanelProps) {
     saveAgentOrder,
     deleteManagedAgent
   } = useYalsClient();
+
+  const { resolved: themeResolved, toggle: toggleTheme } = useTheme();
 
   const [controlPassword, setControlPassword] = useState('');
   const [controlError, setControlError] = useState<string | null>(null);
@@ -403,13 +401,13 @@ export function ControlPanel({ config }: ControlPanelProps) {
 
   if (!isControlAuthenticated) {
     return (
-      <div className="app-container" style={{ backgroundColor: config.backgroundColor }}>
+      <div className="app-container">
         <main className="main-content">
           <div className="container">
-            <div className="bg-white shadow-sm border border-gray-200 rounded-md p-6 max-w-xl mx-auto mt-10">
+            <div className="u-surface shadow-sm border u-border rounded-md p-6 max-w-xl mx-auto mt-10">
               <div className="flex items-center gap-2 mb-4">
-                <Shield className="w-5 h-5 text-gray-700" />
-                <h2 className="text-lg font-semibold text-gray-900">Control Panel Login</h2>
+                <Shield className="w-5 h-5 u-text" />
+                <h2 className="text-lg font-semibold u-text">Control Panel Login</h2>
               </div>
               <FieldLabel>Control password</FieldLabel>
               <input
@@ -449,6 +447,9 @@ export function ControlPanel({ config }: ControlPanelProps) {
             </button>
           </nav>
           <div className="control-sidebar-footer">
+            <button type="button" className="control-nav-item" onClick={toggleTheme}>
+              {themeResolved === 'dark' ? <><Sun className="w-4 h-4" /> Light mode</> : <><Moon className="w-4 h-4" /> Dark mode</>}
+            </button>
             <a href="/" className="control-nav-item">
               <Home className="w-4 h-4" /> Looking Glass
             </a>
@@ -505,17 +506,17 @@ export function ControlPanel({ config }: ControlPanelProps) {
                           }}
                           onDrop={(e) => { e.preventDefault(); commitAgentReorder(index); }}
                         >
-                          <td className="font-medium text-gray-900">{record.name}</td>
+                          <td className="font-medium u-text">{record.name}</td>
                           <td>{record.group}</td>
                           <td>
                             {online === undefined ? (
-                              <span className="text-gray-400">—</span>
+                              <span className="u-text-faint">—</span>
                             ) : (
                               <span className={`status-dot ${online ? 'online' : 'offline'}`}>{online ? 'Online' : 'Offline'}</span>
                             )}
                           </td>
                           <td>{record.commands.length}</td>
-                          <td className="text-gray-500">{record.updated_at ? new Date(record.updated_at).toLocaleString() : '—'}</td>
+                          <td className="u-text-muted">{record.updated_at ? new Date(record.updated_at).toLocaleString() : '—'}</td>
                           <td>
                             <div className="control-row-actions">
                               <button
@@ -555,7 +556,7 @@ export function ControlPanel({ config }: ControlPanelProps) {
               </div>
             ) : controlView === 'monitoring' ? (
               <div className="space-y-4">
-                <div className="bg-white shadow-sm border border-gray-200 p-4 rounded-md max-w-xs">
+                <div className="u-surface shadow-sm border u-border p-4 rounded-md max-w-xs">
                   <FieldLabel>Probe interval (seconds)</FieldLabel>
                   <input
                     className="command-target-input"
@@ -564,7 +565,7 @@ export function ControlPanel({ config }: ControlPanelProps) {
                     value={editingInterval}
                     onChange={(e) => setEditingInterval(Number(e.target.value) || 60)}
                   />
-                  <p className="text-xs text-gray-500 mt-1">How often each agent probes every target (ICMP ping or TCP connect).</p>
+                  <p className="text-xs u-text-muted mt-1">How often each agent probes every target (ICMP ping or TCP connect).</p>
                 </div>
 
                 <div className="control-table-wrap">
@@ -642,7 +643,7 @@ export function ControlPanel({ config }: ControlPanelProps) {
                 </div>
               </div>
             ) : (
-              <div className="bg-white shadow-sm border border-gray-200 p-4 rounded-md space-y-4 max-w-3xl">
+              <div className="u-surface shadow-sm border u-border p-4 rounded-md space-y-4 max-w-3xl">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
                     <FieldLabel>Server Keepalive Ping Interval</FieldLabel>
@@ -661,10 +662,10 @@ export function ControlPanel({ config }: ControlPanelProps) {
                     <input className="command-target-input" type="number" placeholder="60" value={editingRuntime.rate_limit.time_window} onChange={(e) => setEditingRuntime({ ...editingRuntime, rate_limit: { ...editingRuntime.rate_limit, time_window: Number(e.target.value) } })} />
                   </div>
                 </div>
-                <p className="text-xs text-gray-500">
+                <p className="text-xs u-text-muted">
                   Rate-limit changes apply immediately. gRPC keepalive changes are saved but only take effect after a server restart.
                 </p>
-                <label className="text-sm text-gray-700 flex items-center gap-2">
+                <label className="text-sm u-text flex items-center gap-2">
                   <input type="checkbox" checked={editingRuntime.rate_limit.enabled} onChange={(e) => setEditingRuntime({ ...editingRuntime, rate_limit: { ...editingRuntime.rate_limit, enabled: e.target.checked } })} />
                   Enable Rate Limiting
                 </label>
@@ -720,7 +721,7 @@ export function ControlPanel({ config }: ControlPanelProps) {
 
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <h3 className="text-sm font-semibold text-gray-900">Command Templates & Plugins</h3>
+                        <h3 className="text-sm font-semibold u-text">Command Templates & Plugins</h3>
                         <button className="command-button primary" onClick={addCommand}>
                           <Plus className="w-4 h-4" /> Add Command
                         </button>
@@ -767,7 +768,7 @@ export function ControlPanel({ config }: ControlPanelProps) {
                             ) : (
                               <label className="command-edit-queue" title="Max concurrent runs">
                                 <input type="checkbox" checked={queueEnabled} onChange={(e) => updateCommand(index, { maxmium_queue: e.target.checked ? Math.max(command.maxmium_queue ?? 0, 1) : 0 })} />
-                                <input className="command-target-input command-edit-queue-num" type="number" min="1" placeholder="Q" disabled={!queueEnabled} value={queueEnabled ? String(command.maxmium_queue ?? 1) : ''} onChange={(e) => updateCommand(index, { maxmium_queue: Number(e.target.value) || 1 })} />
+                                <input className="command-target-input command-edit-queue-num" type="number" min="1" placeholder="Concurrency" disabled={!queueEnabled} value={queueEnabled ? String(command.maxmium_queue ?? 1) : ''} onChange={(e) => updateCommand(index, { maxmium_queue: Number(e.target.value) || 1 })} />
                               </label>
                             )}
                             <label className="command-edit-ignore" title={`Ignore target input${ignoreTargetForced ? ' (set by plugin)' : ''}`}>
@@ -797,7 +798,7 @@ export function ControlPanel({ config }: ControlPanelProps) {
                     </div>
 
                     {editingAgent.uuid && editingAgent.token && (
-                      <div className="rounded-md bg-gray-50 border border-gray-200 p-4 text-sm text-gray-700 space-y-2">
+                      <div className="rounded-md u-bg-subtle border u-border p-4 text-sm u-text space-y-2">
                         <div className="flex items-center justify-between gap-2">
                           <p className="font-semibold">Install Command</p>
                           <button type="button" className="control-icon-button" onClick={() => handleCopyInstall(editingAgent.uuid!, editingAgent.token)} title="Copy install command">
@@ -807,7 +808,7 @@ export function ControlPanel({ config }: ControlPanelProps) {
                           </button>
                         </div>
                         <code className="block break-all">{buildInstallCommand(editingAgent.uuid, editingAgent.token)}</code>
-                        <p className="text-xs text-gray-500">
+                        <p className="text-xs u-text-muted">
                           Run this on the agent host. It pulls and builds the agent, then registers it as a systemd service. The agent trusts the server's built-in certificate directly, and also accepts a real CA-trusted certificate when the server is reached through a TLS-terminating reverse proxy / CDN.
                         </p>
                       </div>

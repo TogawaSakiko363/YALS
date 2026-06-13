@@ -185,11 +185,13 @@ func (s *Store) initSchema() error {
 			recv INTEGER NOT NULL DEFAULT 0
 		);`,
 		// (agent_name, target_name, ts) serves the series query (exact prefix) and
-		// the aggregate query (agent_name prefix, already grouped/ordered the way
-		// the window functions partition, avoiding a sort). (ts) lets the retention
-		// pruner range-delete instead of full-scanning. The old single-purpose
-		// indexes are dropped to cut per-insert index maintenance on the hot table.
+		// the aggregate query for large windows (no sort for the partition).
+		// (agent_name, ts) lets smaller windows (1h/6h — the common case) range-scan
+		// only the window's rows instead of all retention, which is the dominant
+		// cost when switching the time scale. (ts) lets the retention pruner
+		// range-delete instead of full-scanning.
 		`CREATE INDEX IF NOT EXISTS idx_probe_results_atts ON probe_results(agent_name, target_name, ts);`,
+		`CREATE INDEX IF NOT EXISTS idx_probe_results_agent_ts ON probe_results(agent_name, ts);`,
 		`CREATE INDEX IF NOT EXISTS idx_probe_results_ts ON probe_results(ts);`,
 		`DROP INDEX IF EXISTS idx_probe_results_query;`,
 		`DROP INDEX IF EXISTS idx_probe_results_target;`,

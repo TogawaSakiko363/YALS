@@ -1,5 +1,6 @@
 import { Settings } from 'lucide-react';
 import { CustomConfig } from '../hooks/useCustomConfig';
+import { ThemeToggle } from './ThemeToggle';
 
 interface PageHeaderProps {
   config: CustomConfig;
@@ -25,6 +26,7 @@ export function PageHeader({ config, active }: PageHeaderProps) {
             </nav>
           </div>
           <div className="header-right">
+            <ThemeToggle />
             <a href="/control" className="header-gear" title="Control panel" aria-label="Control panel">
               <Settings className="w-5 h-5" />
             </a>

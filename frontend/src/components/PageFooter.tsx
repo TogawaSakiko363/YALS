@@ -8,19 +8,40 @@ interface PageFooterProps {
 
 // Shared footer for the public pages (looking glass / status / probes). It pulls
 // the version from the public /api/version endpoint itself so every page renders
-// an identical footer without threading the value through each page.
+// an identical footer without threading the value through each page. Because each
+// page is a full navigation, the last-known version is cached in localStorage and
+// used as the initial value — so the footer shows it immediately instead of
+// flashing a placeholder while the fetch is in flight.
+const VERSION_CACHE_KEY = 'yals_version';
+
+const readCachedVersion = (): string => {
+  try {
+    return localStorage.getItem(VERSION_CACHE_KEY) || '';
+  } catch {
+    return '';
+  }
+};
+
 export function PageFooter({ config }: PageFooterProps) {
-  const [version, setVersion] = useState('unknown');
+  const [version, setVersion] = useState(readCachedVersion);
 
   useEffect(() => {
     let cancelled = false;
     fetch('/api/version', { headers: { Accept: 'application/json' } })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((d: { version?: string }) => {
-        if (!cancelled && d.version) setVersion(d.version);
+        if (!cancelled && d.version) {
+          setVersion(d.version);
+          try {
+            localStorage.setItem(VERSION_CACHE_KEY, d.version);
+          } catch {
+            // localStorage may be unavailable (private mode); the in-memory
+            // value still renders for this page load.
+          }
+        }
       })
       .catch(() => {
-        // Leave the placeholder; a missing version is not worth surfacing.
+        // Leave the cached/empty value; a missing version is not worth surfacing.
       });
     return () => {
       cancelled = true;
@@ -36,7 +57,7 @@ export function PageFooter({ config }: PageFooterProps) {
               Powered by YALS
               <Github className="w-4 h-4" />
             </a>
-            <p className="version-info">Version {version}</p>
+            <p className="version-info">Version {version || '—'}</p>
           </div>
           <div className="footer-right">
             <p>{config.footerRightText}</p>

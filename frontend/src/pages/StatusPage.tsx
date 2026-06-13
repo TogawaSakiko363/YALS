@@ -28,6 +28,17 @@ function MetricBar({ label, value, used, total }: { label: string; value: number
   );
 }
 
+function StatusCardSkeleton() {
+  return (
+    <div className="status-card status-card-skeleton" aria-hidden="true">
+      <div className="skeleton-line" />
+      <div className="skeleton-bar" />
+      <div className="skeleton-bar" />
+      <div className="skeleton-bar" />
+    </div>
+  );
+}
+
 function StatusCard({ item }: { item: StatusItem }) {
   const m = item.metrics;
   const memPct = m && m.mem_total > 0 ? (m.mem_used / m.mem_total) * 100 : 0;
@@ -66,6 +77,7 @@ export function StatusPage({ config }: StatusPageProps) {
   const { fetchStatus } = useYalsClient();
   const [items, setItems] = useState<StatusItem[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -75,10 +87,16 @@ export function StatusPage({ config }: StatusPageProps) {
           if (!cancelled) {
             setItems(data);
             setError(null);
+            setLoading(false);
           }
         })
         .catch((e) => {
-          if (!cancelled) setError(getErrorMessage(e));
+          // Keep the last good data on a transient poll failure so the page
+          // doesn't flicker back to an empty/error state mid-refresh.
+          if (!cancelled) {
+            setError(getErrorMessage(e));
+            setLoading(false);
+          }
         });
     };
     load();
@@ -89,17 +107,21 @@ export function StatusPage({ config }: StatusPageProps) {
     };
   }, [fetchStatus]);
 
+  const showError = error && items.length === 0;
+  const showEmpty = !loading && !error && items.length === 0;
+  const showSkeletons = loading && items.length === 0;
+
   return (
-    <div className="app-container" style={{ backgroundColor: config.backgroundColor }}>
+    <div className="app-container">
       <PageHeader config={config} active="status" />
       <main className="main-content">
         <div className="container">
-          {error && <div className="command-status error">{error}</div>}
-          {items.length === 0 && !error && <p className="text-sm text-gray-500">No agents registered yet.</p>}
+          {showError && <div className="command-status error">{error}</div>}
+          {showEmpty && <p className="text-sm u-text-muted">No agents registered yet.</p>}
           <div className="status-grid">
-            {items.map((item) => (
-              <StatusCard key={item.uuid} item={item} />
-            ))}
+            {showSkeletons
+              ? Array.from({ length: 3 }).map((_, i) => <StatusCardSkeleton key={i} />)
+              : items.map((item) => <StatusCard key={item.uuid} item={item} />)}
           </div>
         </div>
       </main>

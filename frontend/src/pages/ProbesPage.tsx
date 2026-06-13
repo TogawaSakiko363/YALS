@@ -167,7 +167,7 @@ export function ProbesPage({ config }: ProbesPageProps) {
   }, [visibleRows, sortKey, sortDir]);
 
   return (
-    <div className="app-container" style={{ backgroundColor: config.backgroundColor }}>
+    <div className="app-container">
       <PageHeader config={config} active="probes" />
       <main className="main-content">
         <div className="container">
@@ -231,7 +231,7 @@ export function ProbesPage({ config }: ProbesPageProps) {
                   return (
                     <Fragment key={r.name}>
                       <tr>
-                        <td className="font-medium text-gray-900">{r.name}</td>
+                        <td className="font-medium u-text">{r.name}</td>
                         <td>{r.location || '—'}</td>
                         <td>{r.isp || '—'}</td>
                         <td>{r.protocol === 'TCP' ? `TCP:${r.port}` : (r.protocol || '—')}</td>

@@ -15,7 +15,7 @@ function App({ config }: AppProps) {
   const pathname = window.location.pathname;
 
   if (pathname === '/control' || pathname === '/control.html') {
-    return <ControlPanel config={config} />;
+    return <ControlPanel />;
   }
   if (pathname === '/status' || pathname === '/status.html') {
     return <StatusPage config={config} />;

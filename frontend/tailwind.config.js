@@ -1,6 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  // Theme is driven by <html data-theme>; expose a `dark:` variant for it.
+  darkMode: ['selector', '[data-theme="dark"]'],
   theme: {
     extend: {
       // Unify the utility-class corner radii (rounded, rounded-md, rounded-lg…)

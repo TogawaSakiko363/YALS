@@ -26,6 +26,17 @@ func (p *MTRPlugin) GetDescription() string {
 	return "MTR network diagnostic tool"
 }
 
+// GetIgnoreTarget returns false: mtr always needs a target, so the control UI
+// forbids configuring ignore_target for it (matching tcping/udping).
+func (p *MTRPlugin) GetIgnoreTarget() bool {
+	return false
+}
+
+// GetMaximumQueue returns the per-command concurrency cap enforced for mtr.
+func (p *MTRPlugin) GetMaximumQueue() int {
+	return 10
+}
+
 // MTRHop represents a single hop in the MTR trace
 type MTRHop struct {
 	TTL      int

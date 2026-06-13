@@ -214,38 +214,54 @@ func (s *tcpStatistics) getStats() (sent, responded int64, min, max, avg float64
 	return s.sentCount, s.respondedCount, s.minTime, s.maxTime, avg
 }
 
-// parseTCPTarget parses the target string in format "host:port"
+// defaultTCPPort is used when the target omits a port.
+const defaultTCPPort = "80"
+
+// parseTCPTarget parses the target string in format "host:port". The port is
+// optional — when omitted it defaults to defaultTCPPort (80).
 func parseTCPTarget(target string) (host, port string, err error) {
 	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", "", fmt.Errorf("empty host")
+	}
 
-	// Check for IPv6 format [host]:port
+	// IPv6 in brackets: [host] or [host]:port
 	if strings.HasPrefix(target, "[") {
-		idx := strings.LastIndex(target, "]:")
-		if idx != -1 {
-			host = target[1:idx]
-			port = target[idx+2:]
-			return host, port, nil
+		end := strings.Index(target, "]")
+		if end == -1 {
+			return "", "", fmt.Errorf("invalid IPv6 format")
 		}
-		return "", "", fmt.Errorf("invalid IPv6 format")
+		host = target[1:end]
+		rest := target[end+1:]
+		if strings.HasPrefix(rest, ":") && len(rest) > 1 {
+			port = rest[1:]
+		} else {
+			port = defaultTCPPort
+		}
+		return host, port, nil
 	}
 
-	// Check for host:port format
-	idx := strings.LastIndex(target, ":")
-	if idx == -1 {
-		return "", "", fmt.Errorf("missing port number")
-	}
-
-	// Handle IPv6 without brackets (multiple colons)
+	// Bare IPv6 (multiple colons, no brackets): only valid as a host with the
+	// default port; otherwise it's ambiguous and must use brackets.
 	if strings.Count(target, ":") > 1 {
+		if net.ParseIP(target) != nil {
+			return target, defaultTCPPort, nil
+		}
 		return "", "", fmt.Errorf("IPv6 address must be enclosed in brackets [host]:port")
 	}
 
+	// host or host:port
+	idx := strings.LastIndex(target, ":")
+	if idx == -1 {
+		return target, defaultTCPPort, nil // no port → default
+	}
 	host = target[:idx]
 	port = target[idx+1:]
-
-	if host == "" || port == "" {
-		return "", "", fmt.Errorf("empty host or port")
+	if host == "" {
+		return "", "", fmt.Errorf("empty host")
 	}
-
+	if port == "" {
+		port = defaultTCPPort // trailing colon → default
+	}
 	return host, port, nil
 }

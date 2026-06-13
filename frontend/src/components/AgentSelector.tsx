@@ -55,7 +55,7 @@ const AgentItem: React.FC<AgentItemProps> = React.memo(({
           <StatusIcon className={`status-icon ${isOnline ? 'online' : 'offline'}`} />
           <div className="min-w-0 flex-1">
             <h3 className={`text-sm font-medium truncate ${
-              isOnline ? 'text-gray-900' : 'text-gray-600'
+              isOnline ? 'u-text' : 'u-text-muted'
             }`}>
               {agent.name}
             </h3>
@@ -67,9 +67,9 @@ const AgentItem: React.FC<AgentItemProps> = React.memo(({
           </div>
         </div>
         {isExpanded ? (
-          <ChevronUp className="w-4 h-4 text-gray-400 ml-2 flex-shrink-0" />
+          <ChevronUp className="w-4 h-4 u-text-faint ml-2 flex-shrink-0" />
         ) : (
-          <ChevronDown className="w-4 h-4 text-gray-400 ml-2 flex-shrink-0" />
+          <ChevronDown className="w-4 h-4 u-text-faint ml-2 flex-shrink-0" />
         )}
       </div>
 
@@ -142,12 +142,12 @@ export const AgentSelector: React.FC<AgentSelectorProps> = React.memo(({
   }, [disabled, onSelectAgent, expandedAgent]);
 
   return (
-    <div className="bg-white shadow-sm border border-gray-200 p-4 rounded-md">
+    <div className="u-surface shadow-sm border u-border p-4 rounded-md">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <Server className="w-4 h-4 text-gray-600" />
-          <h2 className="text-base font-semibold text-gray-900">Servers</h2>
-          <span className="text-xs text-gray-500">({onlineAgents.length} online)</span>
+          <Server className="w-4 h-4 u-text-muted" />
+          <h2 className="text-base font-semibold u-text">Servers</h2>
+          <span className="text-xs u-text-muted">({onlineAgents.length} online)</span>
         </div>
         <select
           value={selectedGroup}
@@ -165,7 +165,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = React.memo(({
       </div>
 
       {filteredAgents.length === 0 ? (
-        <div className="text-center py-6 text-gray-500">
+        <div className="text-center py-6 u-text-muted">
           <p className="text-sm">No nodes available</p>
         </div>
       ) : (
@@ -184,8 +184,8 @@ export const AgentSelector: React.FC<AgentSelectorProps> = React.memo(({
 
           {offlineAgents.length > 0 && (
             <>
-              <div className="border-t border-gray-200 pt-2 mt-4">
-                <h3 className="text-xs font-medium text-gray-500 mb-2">Offline</h3>
+              <div className="border-t u-border pt-2 mt-4">
+                <h3 className="text-xs font-medium u-text-muted mb-2">Offline</h3>
               </div>
               {offlineAgents.map((agent) => (
                 <AgentItem

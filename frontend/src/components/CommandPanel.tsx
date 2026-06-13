@@ -129,7 +129,7 @@ export const CommandPanel: React.FC<CommandPanelProps> = React.memo(({
 
         <div className="space-y-2">
           {!hasCommands && (
-            <div className="text-center py-6 text-gray-500">
+            <div className="text-center py-6 u-text-muted">
               <p>No commands available</p>
             </div>
           )}
