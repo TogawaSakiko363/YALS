@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { CustomConfig } from '../hooks/useCustomConfig';
 import { useYalsClient } from '../hooks/useYalsClient';
@@ -67,6 +67,22 @@ export function ProbesPage({ config }: ProbesPageProps) {
   // Click-to-sort on the metric columns. null = default (targets.yaml) order.
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  // Visible width of the (horizontally scrollable) table wrap. The expanded
+  // chart row spans every column, so its cell is as wide as the whole table; we
+  // pin the chart to this visible width so it's always fully shown rather than
+  // scrolled partly off-screen.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [wrapWidth, setWrapWidth] = useState(0);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const update = () => setWrapWidth(el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -209,7 +225,7 @@ export function ProbesPage({ config }: ProbesPageProps) {
 
           {error && <div className="command-status error">{error}</div>}
 
-          <div className="control-table-wrap">
+          <div className="control-table-wrap" ref={wrapRef}>
             <table className="control-table">
               <thead>
                 <tr>
@@ -255,9 +271,11 @@ export function ProbesPage({ config }: ProbesPageProps) {
                       {isOpen && (
                         <tr>
                           <td colSpan={10} className="probes-chart-cell">
-                            {series[r.name]
-                              ? <LatencyChart points={series[r.name]} name={r.name} />
-                              : <div className="latency-chart-empty">Loading…</div>}
+                            <div className="probes-chart-sticky" style={wrapWidth ? { width: `${wrapWidth}px` } : undefined}>
+                              {series[r.name]
+                                ? <LatencyChart points={series[r.name]} name={r.name} />
+                                : <div className="latency-chart-empty">Loading…</div>}
+                            </div>
                           </td>
                         </tr>
                       )}

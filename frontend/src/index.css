@@ -804,28 +804,33 @@ body {
   max-width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  /* Keep the slim, theme-aware horizontal scrollbar (from the global * rule):
+     hiding it left wide tables — and the expanded latency chart, which spans the
+     full table width — silently un-scrollable / cut off on the desktop. */
 }
-.control-table-wrap::-webkit-scrollbar { display: none; }
 
+/* Field spacing auto-compresses with the viewport so the table fits without
+   overflow as long as possible; horizontal padding clamps from 1rem down to
+   0.4rem before the wrap falls back to horizontal scrolling. */
 .control-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
 .control-table th {
   text-align: left;
   font-weight: 600;
   color: var(--text-muted);
   background-color: var(--surface-2);
-  padding: 0.625rem 1rem;
+  padding: 0.625rem clamp(0.4rem, 1.4vw, 1rem);
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
 .control-table td {
-  padding: 0.625rem 1rem;
+  padding: 0.625rem clamp(0.4rem, 1.4vw, 1rem);
   border-bottom: 1px solid var(--separator);
   color: var(--text);
   vertical-align: middle;
   white-space: nowrap;
 }
+@media (max-width: 768px) { .control-table { font-size: 0.8125rem; } }
+@media (max-width: 480px) { .control-table { font-size: 0.78rem; } }
 .control-table td.probes-chart-cell,
 .control-table td.control-table-empty { white-space: normal; }
 .control-table tr:last-child td { border-bottom: none; }
@@ -1171,7 +1176,17 @@ body {
 .probes-expand-icon { transition: transform 0.15s ease; }
 .probes-expand-icon.open { transform: rotate(180deg); }
 
-.probes-chart-cell { background-color: var(--surface-2); padding: 0.5rem 1rem 0.75rem; }
+/* The chart row spans every column, so its cell is as wide as the (possibly
+   overflowing) table. The inner sticky wrapper is sized to the visible scroll
+   width and pinned to the left edge, so the chart is always fully shown in the
+   viewport instead of being scrolled partly off-screen with the table. */
+.probes-chart-cell { background-color: var(--surface-2); padding: 0; }
+.probes-chart-sticky {
+  position: sticky;
+  left: 0;
+  box-sizing: border-box;
+  padding: 0.5rem 1rem 0.75rem;
+}
 
 .latency-chart-svg { display: block; }
 .latency-chart-axis-label { fill: var(--text-faint); font-size: 10px; }
@@ -1186,7 +1201,7 @@ body {
 .latency-chart.compact .latency-chart-axis-label { font-size: 9px; }
 .latency-chart.compact .latency-chart-caption { gap: 0.5rem 0.75rem; margin-top: 0.35rem; font-size: 0.68rem; }
 @media (max-width: 640px) {
-  .probes-chart-cell { padding: 0.4rem 0.5rem 0.5rem; }
+  .probes-chart-sticky { padding: 0.4rem 0.5rem 0.5rem; }
 }
 .latency-chart-empty { padding: 1.5rem; text-align: center; color: var(--text-faint); font-size: 0.8125rem; }
 .latency-chart-loss { color: var(--danger); }

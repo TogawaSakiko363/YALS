@@ -174,13 +174,19 @@ func (m *Manager) RegisterAgent(reg AgentRegistration, stream proto.AgentService
 		agent.Name = reg.Name
 		agent.Group = reg.Group
 		agent.Details = reg.Details
-		agent.stream = stream
 		agent.lastCheck = time.Now()
 		agent.availableCommands = cloneCommands(reg.Commands)
 		if agent.runningCommands == nil {
 			agent.runningCommands = make(map[string]int)
 		}
+		// Metadata/command refreshes (the handshake and the control-panel "save
+		// agent" flow) pass a nil stream and MUST NOT disturb the agent's live
+		// stream: nil-ing it here breaks the connected agent so the immediately
+		// following reload_config push — and every later command — fails with
+		// "agent stream unavailable". Stream lifecycle is owned solely by
+		// Register/UnregisterAgentStream.
 		if stream != nil {
+			agent.stream = stream
 			agent.status = StatusConnected
 			agent.lastConnected = time.Now()
 		}
@@ -277,13 +283,21 @@ func (m *Manager) RegisterAgentStream(uuid string, stream proto.AgentService_Str
 	return agent, nil
 }
 
-// UnregisterAgentStream marks an agent as disconnected.
-func (m *Manager) UnregisterAgentStream(uuid string) {
+// UnregisterAgentStream marks an agent as disconnected. The caller passes the
+// exact stream it registered: a reload or quick reconnect can attach a newer
+// stream before this (older) goroutine's deferred cleanup runs, and nil-ing the
+// agent's stream then would clobber the live connection — making every later
+// command fail with "agent stream unavailable". So only tear down when this is
+// still the active stream.
+func (m *Manager) UnregisterAgentStream(uuid string, stream proto.AgentService_StreamCommandsServer) {
 	m.agentsLock.Lock()
 	defer m.agentsLock.Unlock()
 
 	agent, exists := m.agentsByUUID[uuid]
 	if !exists {
+		return
+	}
+	if stream != nil && agent.stream != stream {
 		return
 	}
 

@@ -154,7 +154,7 @@ func (h *Handler) StreamCommands(stream proto.AgentService_StreamCommandsServer)
 	if err != nil {
 		return status.Error(codes.NotFound, err.Error())
 	}
-	defer h.agentManager.UnregisterAgentStream(uuidValue)
+	defer h.agentManager.UnregisterAgentStream(uuidValue, stream)
 
 	logger.Infof("Agent stream connected: %s (%s)", agentInfo.Name, uuidValue)
 	h.pushProbeConfigToAgent(uuidValue)
